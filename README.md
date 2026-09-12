@@ -155,8 +155,8 @@ Example:
 
 ```bash
 llm-assay \
-  --base-url http://spark:8888/v1 \
-  --model openai/gpt-oss-120b \
+  --base-url http://localhost:8000/v1 \
+  --model cyankiwi/Qwen3.8-27B-AWQ-FP8 \
   --depth 0 4096 8192 16384 32768 \
   --latency-mode generation
 ```
@@ -164,21 +164,21 @@ llm-assay \
 Output:
 
 
-| model               |            test |             t/s |     peak t/s |      ttfr (ms) |   est_ppt (ms) |   e2e_ttft (ms) |
-|:--------------------|----------------:|----------------:|-------------:|---------------:|---------------:|----------------:|
-| openai/gpt-oss-120b |          pp2048 | 8521.08 ± 69.61 |              |  297.14 ± 1.97 |  240.36 ± 1.97 |   340.65 ± 3.49 |
-| openai/gpt-oss-120b |            tg32 |    73.18 ± 0.45 | 75.84 ± 0.48 |                |                |                 |
-| openai/gpt-oss-120b |  pp2048 @ d4096 | 9450.36 ± 24.73 |              |  706.92 ± 1.70 |  650.14 ± 1.70 |   750.96 ± 3.08 |
-| openai/gpt-oss-120b |    tg32 @ d4096 |    72.22 ± 0.83 | 74.81 ± 0.86 |                |                |                 |
-| openai/gpt-oss-120b |  pp2048 @ d8192 | 8481.42 ± 38.50 |              | 1264.15 ± 5.50 | 1207.37 ± 5.50 |  1307.31 ± 6.20 |
-| openai/gpt-oss-120b |    tg32 @ d8192 |    71.78 ± 0.74 | 74.36 ± 0.77 |                |                |                 |
-| openai/gpt-oss-120b | pp2048 @ d16384 | 7954.96 ± 14.20 |              | 2373.83 ± 4.14 | 2317.05 ± 4.14 |  2418.63 ± 4.87 |
-| openai/gpt-oss-120b |   tg32 @ d16384 |    70.48 ± 0.84 | 73.02 ± 0.86 |                |                |                 |
-| openai/gpt-oss-120b | pp2048 @ d32768 |  6896.57 ± 4.62 |              | 5105.09 ± 3.38 | 5048.31 ± 3.38 |  5153.34 ± 2.87 |
-| openai/gpt-oss-120b |   tg32 @ d32768 |    65.80 ± 0.79 | 68.17 ± 0.82 |                |                |                 |
+| model                        |            test |             t/s |      peak t/s |        ttfr (ms) |     est_ppt (ms) |    e2e_ttft (ms) |
+|:-----------------------------|----------------:|----------------:|--------------:|-----------------:|-----------------:|-----------------:|
+| cyankiwi/Qwen3.8-27B-AWQ-FP8 |          pp2048 | 2124.54 ± 25.36 |               |  1046.17 ± 11.33 |   964.38 ± 11.33 |  1046.17 ± 11.33 |
+| cyankiwi/Qwen3.8-27B-AWQ-FP8 |            tg32 |    85.59 ± 8.36 |  88.35 ± 8.63 |                  |                  |                  |
+| cyankiwi/Qwen3.8-27B-AWQ-FP8 |  pp2048 @ d4096 |  2081.16 ± 5.93 |               |   3034.50 ± 8.40 |   2952.70 ± 8.40 |   3034.50 ± 8.40 |
+| cyankiwi/Qwen3.8-27B-AWQ-FP8 |    tg32 @ d4096 |   75.21 ± 17.20 | 77.64 ± 17.75 |                  |                  |                  |
+| cyankiwi/Qwen3.8-27B-AWQ-FP8 |  pp2048 @ d8192 |  2037.53 ± 4.45 |               |  5108.16 ± 10.90 |  5026.36 ± 10.90 |  5108.16 ± 10.90 |
+| cyankiwi/Qwen3.8-27B-AWQ-FP8 |    tg32 @ d8192 |    71.17 ± 0.59 |  73.47 ± 0.61 |                  |                  |                  |
+| cyankiwi/Qwen3.8-27B-AWQ-FP8 | pp2048 @ d16384 |  1950.05 ± 3.99 |               |  9534.42 ± 19.79 |  9452.62 ± 19.79 |  9534.42 ± 19.79 |
+| cyankiwi/Qwen3.8-27B-AWQ-FP8 |   tg32 @ d16384 |   83.18 ± 14.50 | 85.86 ± 14.97 |                  |                  |                  |
+| cyankiwi/Qwen3.8-27B-AWQ-FP8 | pp2048 @ d32768 |  1816.41 ± 2.51 |               | 19249.80 ± 26.48 | 19168.00 ± 26.48 | 19249.80 ± 26.48 |
+| cyankiwi/Qwen3.8-27B-AWQ-FP8 |   tg32 @ d32768 |    72.15 ± 7.08 |  74.48 ± 7.30 |                  |                  |                  |
 
-llama-benchy (0.2.2.dev1+g52d2b0d55.d20260206)   # sample captured before the fork
-date: 2026-02-06 15:52:14 | latency mode: generation
+llm-assay (0.5.0-dev+g0896539)
+date: 2026-09-12 08:52:09 | latency mode: generation
 
 -------
 
@@ -346,8 +346,8 @@ In this case, `pp` and `tg` speeds will show an actual prompt processing / token
 
 ```bash
 llm-assay \
-  --base-url http://spark:8888/v1 \
-  --model openai/gpt-oss-120b \
+  --base-url http://localhost:8000/v1 \
+  --model cyankiwi/Qwen3.8-27B-AWQ-FP8 \
   --depth 0 4096 8192 16384 32768 \
   --latency-mode generation \
   --enable-prefix-caching
@@ -356,29 +356,29 @@ llm-assay \
 Output:
 
 
-| model               |            test |              t/s |      peak t/s |        ttfr (ms) |     est_ppt (ms) |    e2e_ttft (ms) |
-|:--------------------|----------------:|-----------------:|--------------:|-----------------:|-----------------:|-----------------:|
-| openai/gpt-oss-120b |          pp2048 | 8236.95 ± 134.25 |               |    298.95 ± 4.08 |    248.70 ± 4.08 |    342.07 ± 3.40 |
-| openai/gpt-oss-120b |            tg32 |     73.96 ± 1.19 |  76.63 ± 1.24 |                  |                  |                  |
-| openai/gpt-oss-120b |  ctx_pp @ d4096 |  9259.71 ± 76.35 |               |    492.62 ± 3.63 |    442.38 ± 3.63 |    535.67 ± 3.75 |
-| openai/gpt-oss-120b |  ctx_tg @ d4096 |     73.28 ± 0.80 |  75.93 ± 0.82 |                  |                  |                  |
-| openai/gpt-oss-120b |  pp2048 @ d4096 | 7467.44 ± 131.59 |               |    324.59 ± 4.84 |    274.34 ± 4.84 |    367.60 ± 4.95 |
-| openai/gpt-oss-120b |    tg32 @ d4096 |     72.25 ± 0.12 |  74.86 ± 0.12 |                  |                  |                  |
-| openai/gpt-oss-120b |  ctx_pp @ d8192 | 9177.24 ± 167.37 |               |   943.19 ± 16.45 |   892.94 ± 16.45 |    973.01 ± 5.31 |
-| openai/gpt-oss-120b |  ctx_tg @ d8192 |     73.43 ± 0.50 |  76.09 ± 0.54 |                  |                  |                  |
-| openai/gpt-oss-120b |  pp2048 @ d8192 | 6846.48 ± 135.57 |               |    349.50 ± 5.96 |    299.25 ± 5.96 |    394.26 ± 5.16 |
-| openai/gpt-oss-120b |    tg32 @ d8192 |     72.62 ± 0.66 |  75.23 ± 0.68 |                  |                  |                  |
-| openai/gpt-oss-120b | ctx_pp @ d16384 | 8235.05 ± 179.06 |               |  2040.75 ± 43.92 |  1990.50 ± 43.92 |  2073.53 ± 23.55 |
-| openai/gpt-oss-120b | ctx_tg @ d16384 |     73.87 ± 5.04 |  76.53 ± 5.22 |                  |                  |                  |
-| openai/gpt-oss-120b | pp2048 @ d16384 | 5441.56 ± 484.88 |               |   429.81 ± 35.96 |   379.57 ± 35.96 |   483.42 ± 48.92 |
-| openai/gpt-oss-120b |   tg32 @ d16384 |    62.80 ± 10.73 | 65.06 ± 11.12 |                  |                  |                  |
-| openai/gpt-oss-120b | ctx_pp @ d32768 | 6904.92 ± 217.24 |               | 4800.62 ± 151.68 | 4750.38 ± 151.68 | 4832.95 ± 157.53 |
-| openai/gpt-oss-120b | ctx_tg @ d32768 |     69.77 ± 5.32 |  72.29 ± 5.52 |                  |                  |                  |
-| openai/gpt-oss-120b | pp2048 @ d32768 | 4549.10 ± 105.92 |               |   500.69 ± 10.32 |   450.44 ± 10.32 |    548.23 ± 8.98 |
-| openai/gpt-oss-120b |   tg32 @ d32768 |     62.18 ± 6.87 |  64.59 ± 6.87 |                  |                  |                  |
+| model                        |            test |             t/s |      peak t/s |       ttfr (ms) |    est_ppt (ms) |   e2e_ttft (ms) |
+|:-----------------------------|----------------:|----------------:|--------------:|----------------:|----------------:|----------------:|
+| cyankiwi/Qwen3.8-27B-AWQ-FP8 |          pp2048 | 2114.72 ± 24.74 |               | 1052.42 ± 11.57 |  968.86 ± 11.57 | 1052.42 ± 11.57 |
+| cyankiwi/Qwen3.8-27B-AWQ-FP8 |            tg32 |    73.30 ± 3.31 |  75.66 ± 3.42 |                 |                 |                 |
+| cyankiwi/Qwen3.8-27B-AWQ-FP8 |  ctx_pp @ d4096 |  2092.53 ± 6.52 |               |  2041.65 ± 6.60 |  1958.09 ± 6.60 |  2041.65 ± 6.60 |
+| cyankiwi/Qwen3.8-27B-AWQ-FP8 |  ctx_tg @ d4096 |    72.23 ± 6.82 |  74.56 ± 7.04 |                 |                 |                 |
+| cyankiwi/Qwen3.8-27B-AWQ-FP8 |  pp2048 @ d4096 | 1127.94 ± 17.50 |               | 1899.55 ± 27.94 | 1815.99 ± 27.94 | 1899.55 ± 27.94 |
+| cyankiwi/Qwen3.8-27B-AWQ-FP8 |    tg32 @ d4096 |    79.87 ± 7.83 |  82.45 ± 8.08 |                 |                 |                 |
+| cyankiwi/Qwen3.8-27B-AWQ-FP8 |  ctx_pp @ d8192 |  2042.64 ± 2.05 |               |  4095.04 ± 4.03 |  4011.48 ± 4.03 |  4095.04 ± 4.03 |
+| cyankiwi/Qwen3.8-27B-AWQ-FP8 |  ctx_tg @ d8192 |    75.08 ± 4.08 |  77.50 ± 4.21 |                 |                 |                 |
+| cyankiwi/Qwen3.8-27B-AWQ-FP8 |  pp2048 @ d8192 |  1100.08 ± 1.94 |               |  1945.25 ± 3.29 |  1861.69 ± 3.29 |  1945.25 ± 3.29 |
+| cyankiwi/Qwen3.8-27B-AWQ-FP8 |    tg32 @ d8192 |    65.97 ± 3.84 |  68.09 ± 3.96 |                 |                 |                 |
+| cyankiwi/Qwen3.8-27B-AWQ-FP8 | ctx_pp @ d16384 |  1956.85 ± 2.09 |               |  8457.41 ± 8.69 |  8373.85 ± 8.69 |  8457.41 ± 8.69 |
+| cyankiwi/Qwen3.8-27B-AWQ-FP8 | ctx_tg @ d16384 |   61.38 ± 11.93 | 63.36 ± 12.32 |                 |                 |                 |
+| cyankiwi/Qwen3.8-27B-AWQ-FP8 | pp2048 @ d16384 |  1035.34 ± 2.46 |               |  2061.67 ± 4.69 |  1978.10 ± 4.69 |  2061.67 ± 4.69 |
+| cyankiwi/Qwen3.8-27B-AWQ-FP8 |   tg32 @ d16384 |   79.84 ± 11.98 | 82.41 ± 12.37 |                 |                 |                 |
+| cyankiwi/Qwen3.8-27B-AWQ-FP8 | ctx_pp @ d32768 |  1821.29 ± 0.85 |               | 18076.13 ± 8.21 | 17992.56 ± 8.21 | 18076.13 ± 8.21 |
+| cyankiwi/Qwen3.8-27B-AWQ-FP8 | ctx_tg @ d32768 |    82.05 ± 8.21 |  84.70 ± 8.47 |                 |                 |                 |
+| cyankiwi/Qwen3.8-27B-AWQ-FP8 | pp2048 @ d32768 |   986.29 ± 6.57 |               | 2160.09 ± 13.78 | 2076.52 ± 13.78 | 2160.09 ± 13.78 |
+| cyankiwi/Qwen3.8-27B-AWQ-FP8 |   tg32 @ d32768 |   88.41 ± 13.67 | 91.27 ± 14.11 |                 |                 |                 |
 
-llama-benchy (0.2.2.dev1+g52d2b0d55.d20260206)   # sample captured before the fork
-date: 2026-02-06 16:15:38 | latency mode: generation
+llm-assay (0.5.0-dev+g0896539)
+date: 2026-09-12 08:54:56 | latency mode: generation
 
 ### Combining multiple parameters
 
@@ -387,7 +387,7 @@ You can specify multiple parameters for `--depth`, `--pp`, `--tg` and `--concurr
 ```bash
 llm-assay \
   --base-url http://localhost:8000/v1 \
-  --model openai/gpt-oss-120b \
+  --model cyankiwi/Qwen3.8-27B-AWQ-FP8 \
   --pp 128 256 \
   --tg 32 64 \
   --depth 0 1024
@@ -412,8 +412,8 @@ Other concurrency scenarios may be added in the future.
 
 ```bash
 llm-assay \
-  --base-url http://spark:8888/v1 \
-  --model openai/gpt-oss-120b \
+  --base-url http://localhost:8000/v1 \
+  --model cyankiwi/Qwen3.8-27B-AWQ-FP8 \
   --depth 0 4096 \
   --latency-mode generation \
   --enable-prefix-caching \
@@ -422,23 +422,23 @@ llm-assay \
 
 Output:
 
-| model               |                test |       t/s (total) |         t/s (req) |       peak t/s |       ttfr (ms) |    est_ppt (ms) |    e2e_ttft (ms) |
-|:--------------------|--------------------:|------------------:|------------------:|---------------:|----------------:|----------------:|-----------------:|
-| openai/gpt-oss-120b |         pp2048 (c1) |   7803.68 ± 63.74 |   7803.68 ± 63.74 |                |   292.86 ± 2.15 |   262.46 ± 2.15 |    337.08 ± 2.48 |
-| openai/gpt-oss-120b |           tg32 (c1) |      74.83 ± 0.59 |      74.83 ± 0.59 |   77.54 ± 0.62 |                 |                 |                  |
-| openai/gpt-oss-120b |         pp2048 (c2) |  7198.20 ± 541.69 | 4872.80 ± 1298.05 |                |  473.18 ± 85.71 |  442.77 ± 85.71 |   568.97 ± 40.44 |
-| openai/gpt-oss-120b |           tg32 (c2) |     111.27 ± 3.61 |      56.20 ± 1.27 |  115.25 ± 3.74 |                 |                 |                  |
-| openai/gpt-oss-120b | ctx_pp @ d4096 (c1) |   8816.20 ± 55.40 |   8816.20 ± 55.40 |                |   495.02 ± 2.91 |   464.62 ± 2.91 |    540.31 ± 1.64 |
-| openai/gpt-oss-120b | ctx_tg @ d4096 (c1) |      72.92 ± 0.63 |      72.92 ± 0.63 |   75.56 ± 0.67 |                 |                 |                  |
-| openai/gpt-oss-120b | pp2048 @ d4096 (c1) | 5918.71 ± 1447.23 | 5918.71 ± 1447.23 |                | 403.38 ± 110.24 | 372.98 ± 110.24 |   432.07 ± 90.02 |
-| openai/gpt-oss-120b |   tg32 @ d4096 (c1) |      65.27 ± 9.85 |      65.27 ± 9.85 |  67.62 ± 10.21 |                 |                 |                  |
-| openai/gpt-oss-120b | ctx_pp @ d4096 (c2) | 7934.38 ± 1145.70 |  4665.38 ± 660.55 |                | 928.79 ± 146.59 | 898.38 ± 146.59 | 1053.95 ± 165.93 |
-| openai/gpt-oss-120b | ctx_tg @ d4096 (c2) |     111.64 ± 3.25 |      56.38 ± 1.06 |  115.63 ± 3.36 |                 |                 |                  |
-| openai/gpt-oss-120b | pp2048 @ d4096 (c2) |  6659.05 ± 231.76 |  3623.78 ± 278.02 |                |  598.81 ± 42.34 |  568.40 ± 42.34 |   615.33 ± 22.02 |
-| openai/gpt-oss-120b |   tg32 @ d4096 (c2) |    116.93 ± 10.24 |      58.47 ± 5.12 | 121.11 ± 10.61 |                 |                 |                  |
+| model                        |                test |     t/s (total) |        t/s (req) |     peak t/s |   peak t/s (req) |         ttfr (ms) |      est_ppt (ms) |     e2e_ttft (ms) |
+|:-----------------------------|--------------------:|----------------:|-----------------:|-------------:|-----------------:|------------------:|------------------:|------------------:|
+| cyankiwi/Qwen3.8-27B-AWQ-FP8 |         pp2048 (c1) | 2102.53 ± 24.03 |  2102.53 ± 24.03 |              |                  |   1055.26 ± 11.21 |    974.63 ± 11.21 |   1055.26 ± 11.21 |
+| cyankiwi/Qwen3.8-27B-AWQ-FP8 |           tg32 (c1) |    83.27 ± 0.77 |     83.27 ± 0.77 | 85.96 ± 0.79 |     85.96 ± 0.79 |                   |                   |                   |
+| cyankiwi/Qwen3.8-27B-AWQ-FP8 |         pp2048 (c2) | 1965.05 ± 30.91 | 1465.11 ± 530.95 |              |                  |  1633.06 ± 515.14 |  1552.43 ± 515.14 |  1633.06 ± 515.14 |
+| cyankiwi/Qwen3.8-27B-AWQ-FP8 |           tg32 (c2) |   48.37 ± 10.33 |    50.52 ± 27.87 | 60.67 ± 2.08 |    53.69 ± 26.96 |                   |                   |                   |
+| cyankiwi/Qwen3.8-27B-AWQ-FP8 | ctx_pp @ d4096 (c1) |  2080.09 ± 2.50 |   2080.09 ± 2.50 |              |                  |    2050.74 ± 2.37 |    1970.11 ± 2.37 |    2050.74 ± 2.37 |
+| cyankiwi/Qwen3.8-27B-AWQ-FP8 | ctx_tg @ d4096 (c1) |    74.76 ± 3.69 |     74.76 ± 3.69 | 77.17 ± 3.81 |     77.17 ± 3.81 |                   |                   |                   |
+| cyankiwi/Qwen3.8-27B-AWQ-FP8 | pp2048 @ d4096 (c1) |  1114.17 ± 3.81 |   1114.17 ± 3.81 |              |                  |    1918.78 ± 6.28 |    1838.15 ± 6.28 |    1918.78 ± 6.28 |
+| cyankiwi/Qwen3.8-27B-AWQ-FP8 |   tg32 @ d4096 (c1) |    68.72 ± 7.41 |     68.72 ± 7.41 | 70.93 ± 7.65 |     70.93 ± 7.65 |                   |                   |                   |
+| cyankiwi/Qwen3.8-27B-AWQ-FP8 | ctx_pp @ d4096 (c2) |  1978.56 ± 2.68 | 1543.85 ± 585.84 |              |                  | 3097.23 ± 1144.70 | 3016.60 ± 1144.70 | 3097.23 ± 1144.70 |
+| cyankiwi/Qwen3.8-27B-AWQ-FP8 | ctx_tg @ d4096 (c2) |    24.39 ± 0.44 |    40.93 ± 31.17 | 58.00 ± 1.00 |    48.82 ± 25.09 |                   |                   |                   |
+| cyankiwi/Qwen3.8-27B-AWQ-FP8 | pp2048 @ d4096 (c2) |  1083.72 ± 2.04 |  742.75 ± 207.07 |              |                  |  3028.92 ± 821.94 |  2948.29 ± 821.94 |  3028.92 ± 821.94 |
+| cyankiwi/Qwen3.8-27B-AWQ-FP8 |   tg32 @ d4096 (c2) |    32.46 ± 0.02 |    46.28 ± 32.32 | 61.00 ± 0.00 |    53.95 ± 26.60 |                   |                   |                   |
 
-llama-benchy (0.2.2.dev1+g52d2b0d55.d20260206)   # sample captured before the fork
-date: 2026-02-06 16:36:05 | latency mode: generation
+llm-assay (0.5.0-dev+g0896539)
+date: 2026-09-12 08:58:06 | latency mode: generation
 
 ### Further analysis
 
@@ -468,7 +468,7 @@ uv run llm-assay.py tune http://localhost:8000/v1
 
 ```
 Detected
-  endpoint      http://endpoint.example.net:8000/v1  (vLLM 0.27.1)
+  endpoint      http://localhost:8000/v1  (vLLM 0.27.1)
   model         unsloth/Qwen3.8-27B  (served as MY-DEPLOYMENT)
   max ctx       262,144 tokens
   prefix cache  ENABLED -- cached-follow-up measurement is meaningful here
@@ -483,7 +483,7 @@ Detected
 Suggested runs
 
   # smoke -- is the endpoint alive and sane -- run this first
-  uv run llm-assay.py --base-url http://endpoint.example.net:8000/v1 --model unsloth/Qwen3.8-27B \
+  uv run llm-assay.py --base-url http://localhost:8000/v1 --model unsloth/Qwen3.8-27B \
       --served-model-name MY-DEPLOYMENT --pp 512 --tg 64 --exact-tg --depth 0 --runs 3 \
       --latency-mode generation --seed $RANDOM
   …

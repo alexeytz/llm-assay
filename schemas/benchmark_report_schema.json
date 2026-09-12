@@ -1,0 +1,752 @@
+{
+  "$defs": {
+    "BenchmarkMetric": {
+      "properties": {
+        "mean": {
+          "description": "Mean value",
+          "title": "Mean",
+          "type": "number"
+        },
+        "std": {
+          "description": "Sample standard deviation (ddof=1)",
+          "title": "Std",
+          "type": "number"
+        },
+        "values": {
+          "description": "Raw values",
+          "items": {
+            "type": "number"
+          },
+          "title": "Values",
+          "type": "array"
+        },
+        "n": {
+          "default": 0,
+          "description": "Number of samples",
+          "title": "N",
+          "type": "integer"
+        },
+        "sem": {
+          "default": 0.0,
+          "description": "Standard error of the mean",
+          "title": "Sem",
+          "type": "number"
+        },
+        "ci95": {
+          "default": 0.0,
+          "description": "Half-width of the 95% confidence interval of the mean",
+          "title": "Ci95",
+          "type": "number"
+        },
+        "median": {
+          "default": 0.0,
+          "description": "Middle value; unlike the mean it is not moved by one outlier",
+          "title": "Median",
+          "type": "number"
+        },
+        "iqr": {
+          "default": 0.0,
+          "description": "Inter-quartile range (p75-p25); spread that ignores the tails",
+          "title": "Iqr",
+          "type": "number"
+        }
+      },
+      "required": [
+        "mean",
+        "std",
+        "values"
+      ],
+      "title": "BenchmarkMetric",
+      "type": "object"
+    },
+    "BenchmarkRun": {
+      "properties": {
+        "concurrency": {
+          "description": "Concurrency level for this run",
+          "title": "Concurrency",
+          "type": "integer"
+        },
+        "context_size": {
+          "description": "Context size (prefix tokens)",
+          "title": "Context Size",
+          "type": "integer"
+        },
+        "prompt_size": {
+          "description": "Prompt size (tokens)",
+          "title": "Prompt Size",
+          "type": "integer"
+        },
+        "response_size": {
+          "description": "Response size (tokens)",
+          "title": "Response Size",
+          "type": "integer"
+        },
+        "is_context_prefill_phase": {
+          "description": "Whether this was a context prefill phase run",
+          "title": "Is Context Prefill Phase",
+          "type": "boolean"
+        },
+        "reasoning_effort": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "reasoning_effort level used for this run, if any",
+          "title": "Reasoning Effort"
+        },
+        "thinking": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Thinking mode used for this run ('on'/'off'), if any",
+          "title": "Thinking"
+        },
+        "server_metrics": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ServerMetricsDelta"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Server-side counter movement during this shape"
+        },
+        "errors": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Distinct request errors for this shape, with counts; the reason a shape came out short or empty",
+          "title": "Errors"
+        },
+        "pp_throughput": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BenchmarkMetric"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Prefill tokens per second (total)"
+        },
+        "pp_req_throughput": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BenchmarkMetric"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Prefill tokens per second (per request)"
+        },
+        "tg_throughput": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BenchmarkMetric"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Generation tokens per second (total)"
+        },
+        "tg_req_throughput": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BenchmarkMetric"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Generation tokens per second (per request)"
+        },
+        "corpus_fingerprint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Digest of the prompt text this shape actually sent. Two runs that share it read identical text, so a paired comparison between them is sound; two that differ did not, whatever their seeds say. Absent on results saved before this existed, which means unknown, not different.",
+          "title": "Corpus Fingerprint"
+        },
+        "peak_throughput": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BenchmarkMetric"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Peak generation tokens per second (total)"
+        },
+        "peak_req_throughput": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BenchmarkMetric"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Peak generation tokens per second (per request)"
+        },
+        "ttfr": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BenchmarkMetric"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Time to First Response (ms)"
+        },
+        "est_ppt": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BenchmarkMetric"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Estimated pure processing time (ms)"
+        },
+        "e2e_ttft": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BenchmarkMetric"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "End-to-end Time to First Token (ms)"
+        },
+        "throughput_over_time": {
+          "anyOf": [
+            {
+              "items": {
+                "items": {
+                  "items": {
+                    "type": "number"
+                  },
+                  "type": "array"
+                },
+                "type": "array"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "A collection of time series data capturing the aggregated throughput over time. Each item in the list represents a sequence of [timestamp, value] pairs for a specific execution batch or iteration.",
+          "title": "Throughput Over Time"
+        },
+        "requests_throughput_over_time": {
+          "anyOf": [
+            {
+              "items": {
+                "items": {
+                  "items": {
+                    "items": {
+                      "type": "number"
+                    },
+                    "type": "array"
+                  },
+                  "type": "array"
+                },
+                "type": "array"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "A collection of time series data for individual requests. Organized as a list of lists, where the outer list represents batches and the inner list contains the throughput time series for each request in that batch.",
+          "title": "Requests Throughput Over Time"
+        }
+      },
+      "required": [
+        "concurrency",
+        "context_size",
+        "prompt_size",
+        "response_size",
+        "is_context_prefill_phase"
+      ],
+      "title": "BenchmarkRun",
+      "type": "object"
+    },
+    "ServerMetricsDelta": {
+      "description": "Counter movement across one measured run.",
+      "properties": {
+        "prefix_cache_queries": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Prefix cache lookups during the run",
+          "title": "Prefix Cache Queries"
+        },
+        "prefix_cache_hits": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Prefix cache hit tokens/blocks during the run",
+          "title": "Prefix Cache Hits"
+        },
+        "prefix_cache_hit_rate": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "hits/queries during the run (0..1)",
+          "title": "Prefix Cache Hit Rate"
+        },
+        "spec_acceptance_rate": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "accepted/drafted speculative tokens (0..1)",
+          "title": "Spec Acceptance Rate"
+        },
+        "spec_acceptance_length": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Mean accepted tokens per draft, +1 for the bonus token",
+          "title": "Spec Acceptance Length"
+        },
+        "requests_running_at_start": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Requests the server had in flight when this shape's window opened, when llm-assay had none of its own. Anything above zero is another client, including a long stream that never completes inside our window and so never moves the completed-request counter.",
+          "title": "Requests Running At Start"
+        },
+        "requests_finished": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Requests the server completed during this window, from its own counter. Compared against the number llm-assay sent: more means another client shared the endpoint, and every figure here describes the box rather than this run.",
+          "title": "Requests Finished"
+        },
+        "scope": {
+          "default": "shape",
+          "description": "'shape' when diffed from counters around this shape; 'shape (both phases)' under --measure-cached-followup, where one delta spans the context load and the follow-up together; 'server-lifetime' when the engine only publishes gauges, which cannot be attributed to one shape",
+          "title": "Scope",
+          "type": "string"
+        }
+      },
+      "title": "ServerMetricsDelta",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "version": {
+      "description": "Benchmark tool version",
+      "title": "Version",
+      "type": "string"
+    },
+    "timestamp": {
+      "description": "Run timestamp",
+      "title": "Timestamp",
+      "type": "string"
+    },
+    "latency_mode": {
+      "description": "Latency measurement mode used",
+      "title": "Latency Mode",
+      "type": "string"
+    },
+    "latency_ms": {
+      "description": "Measured or assumed latency in ms",
+      "title": "Latency Ms",
+      "type": "number"
+    },
+    "model": {
+      "description": "Model name",
+      "title": "Model",
+      "type": "string"
+    },
+    "prefix_caching_enabled": {
+      "description": "Whether prefix caching was enabled",
+      "title": "Prefix Caching Enabled",
+      "type": "boolean"
+    },
+    "max_concurrency": {
+      "description": "Maximum concurrency level used in the suite",
+      "title": "Max Concurrency",
+      "type": "integer"
+    },
+    "seed": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Corpus sampling seed; equal seeds make two runs pairwise comparable",
+      "title": "Seed"
+    },
+    "reasoning_efforts": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Reasoning effort levels swept, if any",
+      "title": "Reasoning Efforts"
+    },
+    "thinking_modes": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Thinking modes swept ('on'/'off'), if any",
+      "title": "Thinking Modes"
+    },
+    "base_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Endpoint the run was made against",
+      "title": "Base Url"
+    },
+    "served_model_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Model name sent in API calls",
+      "title": "Served Model Name"
+    },
+    "tokenizer": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Tokenizer override, if any",
+      "title": "Tokenizer"
+    },
+    "tokenizer_fallback": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Tokenizer name that failed to load, so gpt2 counted the tokens instead; \"\" if nothing fell back, null if unrecorded",
+      "title": "Tokenizer Fallback"
+    },
+    "book_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Corpus the prompts were sliced from",
+      "title": "Book Url"
+    },
+    "endpoint": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Route benchmarked: chat or completions",
+      "title": "Endpoint"
+    },
+    "exact_tg": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Output length forced with min_tokens + ignore_eos; inflates measured speculative acceptance",
+      "title": "Exact Tg"
+    },
+    "no_cache": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Requests were made unique to defeat prefix caching",
+      "title": "No Cache"
+    },
+    "cold": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Corpus offsets were salted per invocation, so the prefix cache was cold",
+      "title": "Cold"
+    },
+    "cold_salt": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The per-invocation salt; two runs with different salts saw different text and cannot be paired",
+      "title": "Cold Salt"
+    },
+    "adapt_prompt": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Prompt size corrected for chat-template overhead",
+      "title": "Adapt Prompt"
+    },
+    "skip_coherence": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Coherence check was skipped",
+      "title": "Skip Coherence"
+    },
+    "num_runs": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Measured runs per shape requested",
+      "title": "Num Runs"
+    },
+    "warmup_runs": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Discarded warmup runs per shape",
+      "title": "Warmup Runs"
+    },
+    "target_ci": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Adaptive sampling target, if used",
+      "title": "Target Ci"
+    },
+    "max_runs": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Cap on adaptive sampling, if used",
+      "title": "Max Runs"
+    },
+    "extra_body": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Extra JSON fields merged into each request",
+      "title": "Extra Body"
+    },
+    "benchmarks": {
+      "description": "List of benchmark run results",
+      "items": {
+        "$ref": "#/$defs/BenchmarkRun"
+      },
+      "title": "Benchmarks",
+      "type": "array"
+    }
+  },
+  "required": [
+    "version",
+    "timestamp",
+    "latency_mode",
+    "latency_ms",
+    "model",
+    "prefix_caching_enabled",
+    "max_concurrency",
+    "benchmarks"
+  ],
+  "title": "BenchmarkReport",
+  "type": "object"
+}

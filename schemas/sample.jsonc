@@ -1,0 +1,2088 @@
+// Generated with command: uv run llm-assay.py --base-url http://127.0.0.1:8765/v1 --model test --concurrency 1 2 --measure-cached-followup --save-total-throughput-timeseries --save-all-throughput-timeseries --runs 2 --format json --save-result schemas/sample.json
+{
+  // Benchmark tool version
+  "version": "0.5.0-dev+g6d7f29d.dirty",
+  // Run timestamp
+  "timestamp": "2026-09-10 20:36:49Z",
+  // Latency measurement mode used
+  "latency_mode": "api",
+  // Measured or assumed latency in ms
+  "latency_ms": 4.253767683015515,
+  // Model name
+  "model": "test",
+  // Whether prefix caching was enabled
+  "prefix_caching_enabled": true,
+  // Maximum concurrency level used in the suite
+  "max_concurrency": 2,
+  // Corpus sampling seed; equal seeds make two runs pairwise comparable
+  "seed": null,
+  // Reasoning effort levels swept, if any
+  "reasoning_efforts": null,
+  // Thinking modes swept ('on'/'off'), if any
+  "thinking_modes": null,
+  // Endpoint the run was made against
+  "base_url": "http://127.0.0.1:8765/v1",
+  // Model name sent in API calls
+  "served_model_name": "test",
+  // Tokenizer override, if any
+  "tokenizer": null,
+  // Tokenizer name that failed to load, so gpt2 counted the tokens instead; "" if nothing fell back, null if unrecorded
+  "tokenizer_fallback": "test",
+  // Corpus the prompts were sliced from
+  "book_url": "https://www.gutenberg.org/files/2600/2600-0.txt",
+  // Route benchmarked: chat or completions
+  "endpoint": "chat",
+  // Output length forced with min_tokens + ignore_eos; inflates measured speculative acceptance
+  "exact_tg": false,
+  // Requests were made unique to defeat prefix caching
+  "no_cache": false,
+  // Corpus offsets were salted per invocation, so the prefix cache was cold
+  "cold": null,
+  // The per-invocation salt; two runs with different salts saw different text and cannot be paired
+  "cold_salt": null,
+  // Prompt size corrected for chat-template overhead
+  "adapt_prompt": true,
+  // Coherence check was skipped
+  "skip_coherence": false,
+  // Measured runs per shape requested
+  "num_runs": 2,
+  // Discarded warmup runs per shape
+  "warmup_runs": 1,
+  // Adaptive sampling target, if used
+  "target_ci": null,
+  // Cap on adaptive sampling, if used
+  "max_runs": null,
+  // Extra JSON fields merged into each request
+  "extra_body": {},
+  // List of benchmark run results
+  "benchmarks": [
+    {
+      // Concurrency level for this run
+      "concurrency": 1,
+      // Context size (prefix tokens)
+      "context_size": 0,
+      // Prompt size (tokens)
+      "prompt_size": 2048,
+      // Response size (tokens)
+      "response_size": 32,
+      // Whether this was a context prefill phase run
+      "is_context_prefill_phase": false,
+      // reasoning_effort level used for this run, if any
+      "reasoning_effort": null,
+      // Thinking mode used for this run ('on'/'off'), if any
+      "thinking": null,
+      // Server-side counter movement during this shape
+      "server_metrics": null,
+      // Distinct request errors for this shape, with counts; the reason a shape came out short or empty
+      "errors": null,
+      // Prefill tokens per second (total)
+      "pp_throughput": {
+        // Mean value
+        "mean": 989.0291321888402,
+        // Sample standard deviation (ddof=1)
+        "std": 0.3852635749165238,
+        // Raw values
+        "values": [
+          989.3015546752079,
+          988.7567097024726
+        ],
+        // Number of samples
+        "n": 2,
+        // Standard error of the mean
+        "sem": 0.27242248636764543,
+        // Half-width of the 95% confidence interval of the mean
+        "ci95": 3.461400111787303,
+        // Middle value; unlike the mean it is not moved by one outlier
+        "median": 989.0291321888402,
+        // Inter-quartile range (p75-p25); spread that ignores the tails
+        "iqr": 0.27242248636753175
+      },
+      // Prefill tokens per second (per request)
+      "pp_req_throughput": {
+        // Mean value
+        "mean": 989.0291321888402,
+        // Sample standard deviation (ddof=1)
+        "std": 0.3852635749165238,
+        // Raw values
+        "values": [
+          989.3015546752079,
+          988.7567097024726
+        ],
+        // Number of samples
+        "n": 2,
+        // Standard error of the mean
+        "sem": 0.27242248636764543,
+        // Half-width of the 95% confidence interval of the mean
+        "ci95": 3.461400111787303,
+        // Middle value; unlike the mean it is not moved by one outlier
+        "median": 989.0291321888402,
+        // Inter-quartile range (p75-p25); spread that ignores the tails
+        "iqr": 0.27242248636753175
+      },
+      // Generation tokens per second (total)
+      "tg_throughput": {
+        // Mean value
+        "mean": 49.9220717018977,
+        // Sample standard deviation (ddof=1)
+        "std": 0.04344955003774122,
+        // Raw values
+        "values": [
+          49.95279517336889,
+          49.89134823042651
+        ],
+        // Number of samples
+        "n": 2,
+        // Standard error of the mean
+        "sem": 0.03072347147119103,
+        // Half-width of the 95% confidence interval of the mean
+        "ci95": 0.39037242851295323,
+        // Middle value; unlike the mean it is not moved by one outlier
+        "median": 49.9220717018977,
+        // Inter-quartile range (p75-p25); spread that ignores the tails
+        "iqr": 0.030723471471191033
+      },
+      // Generation tokens per second (per request)
+      "tg_req_throughput": {
+        // Mean value
+        "mean": 49.9220717018977,
+        // Sample standard deviation (ddof=1)
+        "std": 0.04344955003774122,
+        // Raw values
+        "values": [
+          49.95279517336889,
+          49.89134823042651
+        ],
+        // Number of samples
+        "n": 2,
+        // Standard error of the mean
+        "sem": 0.03072347147119103,
+        // Half-width of the 95% confidence interval of the mean
+        "ci95": 0.39037242851295323,
+        // Middle value; unlike the mean it is not moved by one outlier
+        "median": 49.9220717018977,
+        // Inter-quartile range (p75-p25); spread that ignores the tails
+        "iqr": 0.030723471471191033
+      },
+      // Digest of the prompt text this shape actually sent. Two runs that share it read identical text, so a paired comparison between them is sound; two that differ did not, whatever their seeds say. Absent on results saved before this existed, which means unknown, not different.
+      "corpus_fingerprint": "65382ab3b4ddd80f",
+      // Peak generation tokens per second (total)
+      "peak_throughput": {
+        // Mean value
+        "mean": 51.53246111163634,
+        // Sample standard deviation (ddof=1)
+        "std": 0.04485114842605951,
+        // Raw values
+        "values": [
+          51.564175662832405,
+          51.50074656044026
+        ],
+        // Number of samples
+        "n": 2,
+        // Standard error of the mean
+        "sem": 0.03171455119607102,
+        // Half-width of the 95% confidence interval of the mean
+        "ci95": 0.4029650874972784,
+        // Middle value; unlike the mean it is not moved by one outlier
+        "median": 51.53246111163634,
+        // Inter-quartile range (p75-p25); spread that ignores the tails
+        "iqr": 0.031714551196067475
+      },
+      // Peak generation tokens per second (per request)
+      "peak_req_throughput": {
+        // Mean value
+        "mean": 51.53246111163634,
+        // Sample standard deviation (ddof=1)
+        "std": 0.04485114842605951,
+        // Raw values
+        "values": [
+          51.564175662832405,
+          51.50074656044026
+        ],
+        // Number of samples
+        "n": 2,
+        // Standard error of the mean
+        "sem": 0.03171455119607102,
+        // Half-width of the 95% confidence interval of the mean
+        "ci95": 0.4029650874972784,
+        // Middle value; unlike the mean it is not moved by one outlier
+        "median": 51.53246111163634,
+        // Inter-quartile range (p75-p25); spread that ignores the tails
+        "iqr": 0.031714551196067475
+      },
+      // Time to First Response (ms)
+      "ttfr": {
+        // Mean value
+        "mean": 2074.971493508201,
+        // Sample standard deviation (ddof=1)
+        "std": 0.80662145100711,
+        // Raw values
+        "values": [
+          2074.4011260103434,
+          2075.5418610060588
+        ],
+        // Number of samples
+        "n": 2,
+        // Standard error of the mean
+        "sem": 0.5703674978576599,
+        // Half-width of the 95% confidence interval of the mean
+        "ci95": 7.247089427779427,
+        // Middle value; unlike the mean it is not moved by one outlier
+        "median": 2074.971493508201,
+        // Inter-quartile range (p75-p25); spread that ignores the tails
+        "iqr": 0.57036749785766
+      },
+      // Estimated pure processing time (ms)
+      "est_ppt": {
+        // Mean value
+        "mean": 2070.7177258251854,
+        // Sample standard deviation (ddof=1)
+        "std": 0.80662145100711,
+        // Raw values
+        "values": [
+          2070.1473583273278,
+          2071.288093323043
+        ],
+        // Number of samples
+        "n": 2,
+        // Standard error of the mean
+        "sem": 0.5703674978576599,
+        // Half-width of the 95% confidence interval of the mean
+        "ci95": 7.247089427779427,
+        // Middle value; unlike the mean it is not moved by one outlier
+        "median": 2070.7177258251854,
+        // Inter-quartile range (p75-p25); spread that ignores the tails
+        "iqr": 0.57036749785766
+      },
+      // End-to-end Time to First Token (ms)
+      "e2e_ttft": {
+        // Mean value
+        "mean": 2074.971493508201,
+        // Sample standard deviation (ddof=1)
+        "std": 0.80662145100711,
+        // Raw values
+        "values": [
+          2074.4011260103434,
+          2075.5418610060588
+        ],
+        // Number of samples
+        "n": 2,
+        // Standard error of the mean
+        "sem": 0.5703674978576599,
+        // Half-width of the 95% confidence interval of the mean
+        "ci95": 7.247089427779427,
+        // Middle value; unlike the mean it is not moved by one outlier
+        "median": 2074.971493508201,
+        // Inter-quartile range (p75-p25); spread that ignores the tails
+        "iqr": 0.57036749785766
+      },
+      // A collection of time series data capturing the aggregated throughput over time. Each item in the list represents a sequence of [timestamp, value] pairs for a specific execution batch or iteration.
+      "throughput_over_time": [
+        [
+          [
+            0.0,
+            1.6113804894635126
+          ],
+          [
+            0.020459133986150846,
+            3.2227609789270253
+          ],
+          [
+            0.03957454700139351,
+            4.834141468390538
+          ],
+          [
+            0.06041240898775868,
+            6.445521957854051
+          ],
+          [
+            0.07906667099450715,
+            8.056902447317563
+          ],
+          [
+            0.0998788209981285,
+            9.668282936781075
+          ],
+          [
+            0.1206712819985114,
+            11.27966342624459
+          ],
+          [
+            0.14012174599338323,
+            12.891043915708101
+          ],
+          [
+            0.16083800498745404,
+            14.502424405171613
+          ],
+          [
+            0.1800555209920276,
+            16.113804894635127
+          ],
+          [
+            0.19998388597741723,
+            17.72518538409864
+          ],
+          [
+            0.22034148999955505,
+            19.33656587356215
+          ],
+          [
+            0.2401330639841035,
+            20.947946363025665
+          ],
+          [
+            0.2605299339920748,
+            22.55932685248918
+          ],
+          [
+            0.28024304599966854,
+            24.17070734195269
+          ],
+          [
+            0.30013602998224087,
+            25.782087831416202
+          ],
+          [
+            0.32075346997589804,
+            27.393468320879716
+          ],
+          [
+            0.3401513029821217,
+            29.004848810343226
+          ],
+          [
+            0.3608106699830387,
+            30.61622929980674
+          ],
+          [
+            0.3804244779748842,
+            32.227609789270254
+          ],
+          [
+            0.40033643497736193,
+            33.83899027873377
+          ],
+          [
+            0.4188515849818941,
+            35.45037076819728
+          ],
+          [
+            0.44055771999410354,
+            37.06175125766079
+          ],
+          [
+            0.4600731899845414,
+            38.6731317471243
+          ],
+          [
+            0.4806253589922562,
+            40.284512236587815
+          ],
+          [
+            0.5004129439766984,
+            41.89589272605133
+          ],
+          [
+            0.520032017986523,
+            43.50727321551484
+          ],
+          [
+            0.5405083769874182,
+            45.11865370497836
+          ],
+          [
+            0.5600502129818778,
+            46.73003419444186
+          ],
+          [
+            0.5805300149950199,
+            48.34141468390538
+          ],
+          [
+            0.6005152269790415,
+            49.95279517336889
+          ],
+          [
+            0.6205858929897659,
+            51.564175662832405
+          ]
+        ],
+        [
+          [
+            0.0,
+            1.6093983300137582
+          ],
+          [
+            0.02096015799907036,
+            3.2187966600275164
+          ],
+          [
+            0.04067664800095372,
+            4.828194990041275
+          ],
+          [
+            0.05968727500294335,
+            6.437593320055033
+          ],
+          [
+            0.07906952599296346,
+            8.04699165006879
+          ],
+          [
+            0.1006958770158235,
+            9.65638998008255
+          ],
+          [
+            0.12070645700441673,
+            11.265788310096308
+          ],
+          [
+            0.14026044600177556,
+            12.875186640110066
+          ],
+          [
+            0.1599405629967805,
+            14.484584970123823
+          ],
+          [
+            0.1804535360133741,
+            16.09398330013758
+          ],
+          [
+            0.19987559999572113,
+            17.70338163015134
+          ],
+          [
+            0.22076169200590812,
+            19.3127799601651
+          ],
+          [
+            0.2404034950013738,
+            20.922178290178856
+          ],
+          [
+            0.2599602150148712,
+            22.531576620192617
+          ],
+          [
+            0.28060817599180155,
+            24.140974950206374
+          ],
+          [
+            0.2988351160020102,
+            25.75037328022013
+          ],
+          [
+            0.3208894100098405,
+            27.35977161023389
+          ],
+          [
+            0.3403580859885551,
+            28.969169940247646
+          ],
+          [
+            0.36006162699777633,
+            30.578568270261407
+          ],
+          [
+            0.3806803750048857,
+            32.18796660027516
+          ],
+          [
+            0.4003656929999124,
+            33.79736493028892
+          ],
+          [
+            0.4193487509910483,
+            35.40676326030268
+          ],
+          [
+            0.4408382289984729,
+            37.016161590316436
+          ],
+          [
+            0.4604246230155695,
+            38.6255599203302
+          ],
+          [
+            0.4800466950109694,
+            40.23495825034396
+          ],
+          [
+            0.5005834889889229,
+            41.84435658035771
+          ],
+          [
+            0.5197689350170549,
+            43.45375491037147
+          ],
+          [
+            0.5391912189952563,
+            45.06315324038523
+          ],
+          [
+            0.5606549980002455,
+            46.67255157039899
+          ],
+          [
+            0.5802954419923481,
+            48.28194990041275
+          ],
+          [
+            0.5999414499965496,
+            49.8913482304265
+          ],
+          [
+            0.6213502160098869,
+            51.50074656044026
+          ]
+        ]
+      ],
+      // A collection of time series data for individual requests. Organized as a list of lists, where the outer list represents batches and the inner list contains the throughput time series for each request in that batch.
+      "requests_throughput_over_time": [
+        [
+          [
+            [
+              0.0,
+              1.6113804894635126
+            ],
+            [
+              0.020459133986150846,
+              3.2227609789270253
+            ],
+            [
+              0.03957454700139351,
+              4.834141468390538
+            ],
+            [
+              0.06041240898775868,
+              6.445521957854051
+            ],
+            [
+              0.07906667099450715,
+              8.056902447317563
+            ],
+            [
+              0.0998788209981285,
+              9.668282936781075
+            ],
+            [
+              0.1206712819985114,
+              11.27966342624459
+            ],
+            [
+              0.14012174599338323,
+              12.891043915708101
+            ],
+            [
+              0.16083800498745404,
+              14.502424405171613
+            ],
+            [
+              0.1800555209920276,
+              16.113804894635127
+            ],
+            [
+              0.19998388597741723,
+              17.72518538409864
+            ],
+            [
+              0.22034148999955505,
+              19.33656587356215
+            ],
+            [
+              0.2401330639841035,
+              20.947946363025665
+            ],
+            [
+              0.2605299339920748,
+              22.55932685248918
+            ],
+            [
+              0.28024304599966854,
+              24.17070734195269
+            ],
+            [
+              0.30013602998224087,
+              25.782087831416202
+            ],
+            [
+              0.32075346997589804,
+              27.393468320879716
+            ],
+            [
+              0.3401513029821217,
+              29.004848810343226
+            ],
+            [
+              0.3608106699830387,
+              30.61622929980674
+            ],
+            [
+              0.3804244779748842,
+              32.227609789270254
+            ],
+            [
+              0.40033643497736193,
+              33.83899027873377
+            ],
+            [
+              0.4188515849818941,
+              35.45037076819728
+            ],
+            [
+              0.44055771999410354,
+              37.06175125766079
+            ],
+            [
+              0.4600731899845414,
+              38.6731317471243
+            ],
+            [
+              0.4806253589922562,
+              40.284512236587815
+            ],
+            [
+              0.5004129439766984,
+              41.89589272605133
+            ],
+            [
+              0.520032017986523,
+              43.50727321551484
+            ],
+            [
+              0.5405083769874182,
+              45.11865370497836
+            ],
+            [
+              0.5600502129818778,
+              46.73003419444186
+            ],
+            [
+              0.5805300149950199,
+              48.34141468390538
+            ],
+            [
+              0.6005152269790415,
+              49.95279517336889
+            ],
+            [
+              0.6205858929897659,
+              51.564175662832405
+            ]
+          ]
+        ],
+        [
+          [
+            [
+              0.0,
+              1.6093983300137582
+            ],
+            [
+              0.02096015799907036,
+              3.2187966600275164
+            ],
+            [
+              0.04067664800095372,
+              4.828194990041275
+            ],
+            [
+              0.05968727500294335,
+              6.437593320055033
+            ],
+            [
+              0.07906952599296346,
+              8.04699165006879
+            ],
+            [
+              0.1006958770158235,
+              9.65638998008255
+            ],
+            [
+              0.12070645700441673,
+              11.265788310096308
+            ],
+            [
+              0.14026044600177556,
+              12.875186640110066
+            ],
+            [
+              0.1599405629967805,
+              14.484584970123823
+            ],
+            [
+              0.1804535360133741,
+              16.09398330013758
+            ],
+            [
+              0.19987559999572113,
+              17.70338163015134
+            ],
+            [
+              0.22076169200590812,
+              19.3127799601651
+            ],
+            [
+              0.2404034950013738,
+              20.922178290178856
+            ],
+            [
+              0.2599602150148712,
+              22.531576620192617
+            ],
+            [
+              0.28060817599180155,
+              24.140974950206374
+            ],
+            [
+              0.2988351160020102,
+              25.75037328022013
+            ],
+            [
+              0.3208894100098405,
+              27.35977161023389
+            ],
+            [
+              0.3403580859885551,
+              28.969169940247646
+            ],
+            [
+              0.36006162699777633,
+              30.578568270261407
+            ],
+            [
+              0.3806803750048857,
+              32.18796660027516
+            ],
+            [
+              0.4003656929999124,
+              33.79736493028892
+            ],
+            [
+              0.4193487509910483,
+              35.40676326030268
+            ],
+            [
+              0.4408382289984729,
+              37.016161590316436
+            ],
+            [
+              0.4604246230155695,
+              38.6255599203302
+            ],
+            [
+              0.4800466950109694,
+              40.23495825034396
+            ],
+            [
+              0.5005834889889229,
+              41.84435658035771
+            ],
+            [
+              0.5197689350170549,
+              43.45375491037147
+            ],
+            [
+              0.5391912189952563,
+              45.06315324038523
+            ],
+            [
+              0.5606549980002455,
+              46.67255157039899
+            ],
+            [
+              0.5802954419923481,
+              48.28194990041275
+            ],
+            [
+              0.5999414499965496,
+              49.8913482304265
+            ],
+            [
+              0.6213502160098869,
+              51.50074656044026
+            ]
+          ]
+        ]
+      ]
+    },
+    {
+      // Concurrency level for this run
+      "concurrency": 2,
+      // Context size (prefix tokens)
+      "context_size": 0,
+      // Prompt size (tokens)
+      "prompt_size": 2048,
+      // Response size (tokens)
+      "response_size": 32,
+      // Whether this was a context prefill phase run
+      "is_context_prefill_phase": false,
+      // reasoning_effort level used for this run, if any
+      "reasoning_effort": null,
+      // Thinking mode used for this run ('on'/'off'), if any
+      "thinking": null,
+      // Server-side counter movement during this shape
+      "server_metrics": null,
+      // Distinct request errors for this shape, with counts; the reason a shape came out short or empty
+      "errors": null,
+      // Prefill tokens per second (total)
+      "pp_throughput": {
+        // Mean value
+        "mean": 1956.9332715101236,
+        // Sample standard deviation (ddof=1)
+        "std": 7.166786907270091,
+        // Raw values
+        "values": [
+          1962.0009551315732,
+          1951.8655878886739
+        ],
+        // Number of samples
+        "n": 2,
+        // Standard error of the mean
+        "sem": 5.067683621449645,
+        // Half-width of the 95% confidence interval of the mean
+        "ci95": 64.38998809413918,
+        // Middle value; unlike the mean it is not moved by one outlier
+        "median": 1956.9332715101236,
+        // Inter-quartile range (p75-p25); spread that ignores the tails
+        "iqr": 5.067683621449532
+      },
+      // Prefill tokens per second (per request)
+      "pp_req_throughput": {
+        // Mean value
+        "mean": 984.4689614082206,
+        // Sample standard deviation (ddof=1)
+        "std": 4.815215868931945,
+        // Raw values
+        "values": [
+          989.4465905302702,
+          983.2703986751415,
+          986.834125377184,
+          978.3247310502867
+        ],
+        // Number of samples
+        "n": 4,
+        // Standard error of the mean
+        "sem": 2.4076079344659727,
+        // Half-width of the 95% confidence interval of the mean
+        "ci95": 7.661008447470725,
+        // Middle value; unlike the mean it is not moved by one outlier
+        "median": 985.0522620261627,
+        // Inter-quartile range (p75-p25); spread that ignores the tails
+        "iqr": 5.453259896527811
+      },
+      // Generation tokens per second (total)
+      "tg_throughput": {
+        // Mean value
+        "mean": 97.35452485310594,
+        // Sample standard deviation (ddof=1)
+        "std": 0.6508920207278561,
+        // Raw values
+        "values": [
+          97.81477501478282,
+          96.89427469142906
+        ],
+        // Number of samples
+        "n": 2,
+        // Standard error of the mean
+        "sem": 0.4602501616768819,
+        // Half-width of the 95% confidence interval of the mean
+        "ci95": 5.847938554266461,
+        // Middle value; unlike the mean it is not moved by one outlier
+        "median": 97.35452485310594,
+        // Inter-quartile range (p75-p25); spread that ignores the tails
+        "iqr": 0.4602501616768677
+      },
+      // Generation tokens per second (per request)
+      "tg_req_throughput": {
+        // Mean value
+        "mean": 49.991391258449575,
+        // Sample standard deviation (ddof=1)
+        "std": 0.052132480043406315,
+        // Raw values
+        "values": [
+          50.03753283044541,
+          49.977097671774,
+          50.02700796842169,
+          49.92392656315721
+        ],
+        // Number of samples
+        "n": 4,
+        // Standard error of the mean
+        "sem": 0.026066240021703158,
+        // Half-width of the 95% confidence interval of the mean
+        "ci95": 0.08294277574905945,
+        // Middle value; unlike the mean it is not moved by one outlier
+        "median": 50.002052820097845,
+        // Inter-quartile range (p75-p25); spread that ignores the tails
+        "iqr": 0.06583428930782276
+      },
+      // Digest of the prompt text this shape actually sent. Two runs that share it read identical text, so a paired comparison between them is sound; two that differ did not, whatever their seeds say. Absent on results saved before this existed, which means unknown, not different.
+      "corpus_fingerprint": "d42cb22c5bef0a52",
+      // Peak generation tokens per second (total)
+      "peak_throughput": {
+        // Mean value
+        "mean": 100.49499339675452,
+        // Sample standard deviation (ddof=1)
+        "std": 0.6718885375255325,
+        // Raw values
+        "values": [
+          100.97009033784033,
+          100.0198964556687
+        ],
+        // Number of samples
+        "n": 2,
+        // Standard error of the mean
+        "sem": 0.47509694108581607,
+        // Half-width of the 95% confidence interval of the mean
+        "ci95": 6.036581733436379,
+        // Middle value; unlike the mean it is not moved by one outlier
+        "median": 100.49499339675452,
+        // Inter-quartile range (p75-p25); spread that ignores the tails
+        "iqr": 0.47509694108582323
+      },
+      // Peak generation tokens per second (per request)
+      "peak_req_throughput": {
+        // Mean value
+        "mean": 51.60401678291569,
+        // Sample standard deviation (ddof=1)
+        "std": 0.053814172948031876,
+        // Raw values
+        "values": [
+          51.65164679271784,
+          51.58926211279896,
+          51.64078241901594,
+          51.534375807130026
+        ],
+        // Number of samples
+        "n": 4,
+        // Standard error of the mean
+        "sem": 0.026907086474015938,
+        // Half-width of the 95% confidence interval of the mean
+        "ci95": 0.08561834916031871,
+        // Middle value; unlike the mean it is not moved by one outlier
+        "median": 51.615022265907456,
+        // Inter-quartile range (p75-p25); spread that ignores the tails
+        "iqr": 0.06795797605968801
+      },
+      // Time to First Response (ms)
+      "ttfr": {
+        // Mean value
+        "mean": 2084.600513248006,
+        // Sample standard deviation (ddof=1)
+        "std": 10.189968590056756,
+        // Raw values
+        "values": [
+          2074.0976780070923,
+          2087.0989369868767,
+          2079.5772160054184,
+          2097.628221992636
+        ],
+        // Number of samples
+        "n": 4,
+        // Standard error of the mean
+        "sem": 5.094984295028378,
+        // Half-width of the 95% confidence interval of the mean
+        "ci95": 16.212240026780297,
+        // Middle value; unlike the mean it is not moved by one outlier
+        "median": 2083.3380764961476,
+        // Inter-quartile range (p75-p25); spread that ignores the tails
+        "iqr": 11.523926732479595
+      },
+      // Estimated pure processing time (ms)
+      "est_ppt": {
+        // Mean value
+        "mean": 2080.34674556499,
+        // Sample standard deviation (ddof=1)
+        "std": 10.189968590056756,
+        // Raw values
+        "values": [
+          2069.8439103240767,
+          2082.845169303861,
+          2075.323448322403,
+          2093.3744543096204
+        ],
+        // Number of samples
+        "n": 4,
+        // Standard error of the mean
+        "sem": 5.094984295028378,
+        // Half-width of the 95% confidence interval of the mean
+        "ci95": 16.212240026780297,
+        // Middle value; unlike the mean it is not moved by one outlier
+        "median": 2079.084308813132,
+        // Inter-quartile range (p75-p25); spread that ignores the tails
+        "iqr": 11.523926732479595
+      },
+      // End-to-end Time to First Token (ms)
+      "e2e_ttft": {
+        // Mean value
+        "mean": 2084.600513248006,
+        // Sample standard deviation (ddof=1)
+        "std": 10.189968590056756,
+        // Raw values
+        "values": [
+          2074.0976780070923,
+          2087.0989369868767,
+          2079.5772160054184,
+          2097.628221992636
+        ],
+        // Number of samples
+        "n": 4,
+        // Standard error of the mean
+        "sem": 5.094984295028378,
+        // Half-width of the 95% confidence interval of the mean
+        "ci95": 16.212240026780297,
+        // Middle value; unlike the mean it is not moved by one outlier
+        "median": 2083.3380764961476,
+        // Inter-quartile range (p75-p25); spread that ignores the tails
+        "iqr": 11.523926732479595
+      },
+      // A collection of time series data capturing the aggregated throughput over time. Each item in the list represents a sequence of [timestamp, value] pairs for a specific execution batch or iteration.
+      "throughput_over_time": [
+        [
+          [
+            0.0,
+            1.5776576615287552
+          ],
+          [
+            0.013566952984547243,
+            3.1553153230575104
+          ],
+          [
+            0.019919915997888893,
+            4.732972984586265
+          ],
+          [
+            0.03233761998126283,
+            6.310630646115021
+          ],
+          [
+            0.0399609970045276,
+            7.888288307643776
+          ],
+          [
+            0.052569125982699916,
+            9.46594596917253
+          ],
+          [
+            0.0601219910022337,
+            11.043603630701286
+          ],
+          [
+            0.07270539799355902,
+            12.621261292230042
+          ],
+          [
+            0.08033802700811066,
+            14.198918953758797
+          ],
+          [
+            0.09330323300673626,
+            15.776576615287553
+          ],
+          [
+            0.09989506399142556,
+            17.354234276816307
+          ],
+          [
+            0.11354800598928705,
+            18.93189193834506
+          ],
+          [
+            0.120075877988711,
+            20.509549599873818
+          ],
+          [
+            0.13262566798948683,
+            22.087207261402572
+          ],
+          [
+            0.14047373598441482,
+            23.66486492293133
+          ],
+          [
+            0.15292347798822448,
+            25.242522584460083
+          ],
+          [
+            0.15975741398870014,
+            26.820180245988837
+          ],
+          [
+            0.1742561279970687,
+            28.397837907517594
+          ],
+          [
+            0.17885212998953648,
+            29.97549556904635
+          ],
+          [
+            0.1938617219857406,
+            31.553153230575106
+          ],
+          [
+            0.1995870980026666,
+            33.13081089210386
+          ],
+          [
+            0.21317207798711024,
+            34.70846855363261
+          ],
+          [
+            0.2187281459919177,
+            36.28612621516137
+          ],
+          [
+            0.233303437998984,
+            37.86378387669012
+          ],
+          [
+            0.2387755170057062,
+            39.44144153821888
+          ],
+          [
+            0.2537058710004203,
+            41.019099199747636
+          ],
+          [
+            0.2588974710088223,
+            42.59675686127639
+          ],
+          [
+            0.27274302899604663,
+            44.174414522805144
+          ],
+          [
+            0.2802873239852488,
+            45.7520721843339
+          ],
+          [
+            0.2932126820087433,
+            47.32972984586266
+          ],
+          [
+            0.29975378498784266,
+            48.90738750739141
+          ],
+          [
+            0.3134065920021385,
+            50.485045168920166
+          ],
+          [
+            0.31905704899691045,
+            52.06270283044892
+          ],
+          [
+            0.3336259360075928,
+            53.640360491977674
+          ],
+          [
+            0.3400502089934889,
+            55.218018153506435
+          ],
+          [
+            0.3526151679980103,
+            56.79567581503519
+          ],
+          [
+            0.36006918898783624,
+            58.37333347656394
+          ],
+          [
+            0.3726704129949212,
+            59.9509911380927
+          ],
+          [
+            0.38022563798585907,
+            61.52864879962145
+          ],
+          [
+            0.3931833109818399,
+            63.10630646115021
+          ],
+          [
+            0.3999123789835721,
+            64.68396412267896
+          ],
+          [
+            0.41351793200010434,
+            66.26162178420772
+          ],
+          [
+            0.41902697100886144,
+            67.83927944573648
+          ],
+          [
+            0.433695618994534,
+            69.41693710726523
+          ],
+          [
+            0.4402203999925405,
+            70.99459476879399
+          ],
+          [
+            0.45278330898145214,
+            72.57225243032273
+          ],
+          [
+            0.45912214400595985,
+            74.1499100918515
+          ],
+          [
+            0.4726250740059186,
+            75.72756775338024
+          ],
+          [
+            0.47927450799033977,
+            77.305225414909
+          ],
+          [
+            0.4931201009894721,
+            78.88288307643776
+          ],
+          [
+            0.4991776259848848,
+            80.46054073796651
+          ],
+          [
+            0.5139125919959042,
+            82.03819839949527
+          ],
+          [
+            0.5186261649942026,
+            83.61585606102402
+          ],
+          [
+            0.5341496570035815,
+            85.19351372255278
+          ],
+          [
+            0.5385045800067019,
+            86.77117138408154
+          ],
+          [
+            0.5542073010001332,
+            88.34882904561029
+          ],
+          [
+            0.5588355470099486,
+            89.92648670713905
+          ],
+          [
+            0.57344256300712,
+            91.5041443686678
+          ],
+          [
+            0.5787891520012636,
+            93.08180203019656
+          ],
+          [
+            0.5926891760027502,
+            94.65945969172532
+          ],
+          [
+            0.600486807001289,
+            96.23711735325406
+          ],
+          [
+            0.6128705949813593,
+            97.81477501478282
+          ],
+          [
+            0.6195349420013372,
+            99.39243267631157
+          ],
+          [
+            0.633851071994286,
+            100.97009033784033
+          ]
+        ],
+        [
+          [
+            0.0,
+            1.5628108821198234
+          ],
+          [
+            0.018927939992863685,
+            3.125621764239647
+          ],
+          [
+            0.01900742799625732,
+            4.6884326463594705
+          ],
+          [
+            0.038213501014979556,
+            6.251243528479294
+          ],
+          [
+            0.038267758005531505,
+            7.814054410599117
+          ],
+          [
+            0.05916041601449251,
+            9.376865292718941
+          ],
+          [
+            0.05940142899635248,
+            10.939676174838764
+          ],
+          [
+            0.07917583800735883,
+            12.502487056958588
+          ],
+          [
+            0.07932290900498629,
+            14.06529793907841
+          ],
+          [
+            0.09969267100677826,
+            15.628108821198234
+          ],
+          [
+            0.09986948000732809,
+            17.19091970331806
+          ],
+          [
+            0.11943648001761176,
+            18.753730585437882
+          ],
+          [
+            0.11958362002042122,
+            20.316541467557705
+          ],
+          [
+            0.13915170700056478,
+            21.87935234967753
+          ],
+          [
+            0.13930056602112018,
+            23.442163231797352
+          ],
+          [
+            0.15984339799615555,
+            25.004974113917175
+          ],
+          [
+            0.159989587002201,
+            26.567784996037
+          ],
+          [
+            0.17989381201914512,
+            28.13059587815682
+          ],
+          [
+            0.18003695301013067,
+            29.693406760276645
+          ],
+          [
+            0.19948964801733382,
+            31.256217642396468
+          ],
+          [
+            0.19980635601677932,
+            32.81902852451629
+          ],
+          [
+            0.2191227250150405,
+            34.38183940663612
+          ],
+          [
+            0.21943449100945145,
+            35.94465028875594
+          ],
+          [
+            0.2391953240148723,
+            37.507461170875764
+          ],
+          [
+            0.24036421501659788,
+            39.070272052995584
+          ],
+          [
+            0.25950127400574274,
+            40.63308293511541
+          ],
+          [
+            0.2598688190046232,
+            42.19589381723523
+          ],
+          [
+            0.2794020300207194,
+            43.75870469935506
+          ],
+          [
+            0.27964964299462736,
+            45.32151558147488
+          ],
+          [
+            0.29940734899719246,
+            46.884326463594704
+          ],
+          [
+            0.29978936800034717,
+            48.44713734571452
+          ],
+          [
+            0.3189527979993727,
+            50.00994822783435
+          ],
+          [
+            0.32023789701634087,
+            51.57275910995418
+          ],
+          [
+            0.33883339300518855,
+            53.135569992074
+          ],
+          [
+            0.34022045801975764,
+            54.69838087419382
+          ],
+          [
+            0.3589628740155604,
+            56.26119175631364
+          ],
+          [
+            0.3605067720054649,
+            57.82400263843347
+          ],
+          [
+            0.37969556101597846,
+            59.38681352055329
+          ],
+          [
+            0.3798791310109664,
+            60.949624402673116
+          ],
+          [
+            0.3994155200198293,
+            62.512435284792936
+          ],
+          [
+            0.39956337699550204,
+            64.07524616691276
+          ],
+          [
+            0.41896569399978034,
+            65.63805704903258
+          ],
+          [
+            0.42028374000801705,
+            67.2008679311524
+          ],
+          [
+            0.43927349301520735,
+            68.76367881327224
+          ],
+          [
+            0.4403207020077389,
+            70.32648969539206
+          ],
+          [
+            0.45911770401289687,
+            71.88930057751188
+          ],
+          [
+            0.45925984799396247,
+            73.4521114596317
+          ],
+          [
+            0.47924407801474445,
+            75.01492234175153
+          ],
+          [
+            0.47938552501727827,
+            76.57773322387135
+          ],
+          [
+            0.49890393699752167,
+            78.14054410599117
+          ],
+          [
+            0.49905054600094445,
+            79.703354988111
+          ],
+          [
+            0.5196608700207435,
+            81.26616587023082
+          ],
+          [
+            0.5198652679973748,
+            82.82897675235064
+          ],
+          [
+            0.5392875880061183,
+            84.39178763447046
+          ],
+          [
+            0.5395346290024463,
+            85.9545985165903
+          ],
+          [
+            0.5587345189996995,
+            87.51740939871011
+          ],
+          [
+            0.5600942760065664,
+            89.08022028082993
+          ],
+          [
+            0.5789934600179549,
+            90.64303116294975
+          ],
+          [
+            0.5803440750169102,
+            92.20584204506959
+          ],
+          [
+            0.5991194320085924,
+            93.76865292718941
+          ],
+          [
+            0.5995146770146675,
+            95.33146380930923
+          ],
+          [
+            0.61923093200312,
+            96.89427469142905
+          ],
+          [
+            0.6196652819926385,
+            98.45708557354888
+          ],
+          [
+            0.6398726880142931,
+            100.0198964556687
+          ]
+        ]
+      ],
+      // A collection of time series data for individual requests. Organized as a list of lists, where the outer list represents batches and the inner list contains the throughput time series for each request in that batch.
+      "requests_throughput_over_time": [
+        [
+          [
+            [
+              0.0,
+              1.6141139622724325
+            ],
+            [
+              0.019919915997888893,
+              3.228227924544865
+            ],
+            [
+              0.0399609970045276,
+              4.842341886817298
+            ],
+            [
+              0.0601219910022337,
+              6.45645584908973
+            ],
+            [
+              0.08033802700811066,
+              8.070569811362162
+            ],
+            [
+              0.09989506399142556,
+              9.684683773634596
+            ],
+            [
+              0.120075877988711,
+              11.298797735907028
+            ],
+            [
+              0.14047373598441482,
+              12.91291169817946
+            ],
+            [
+              0.15975741398870014,
+              14.527025660451892
+            ],
+            [
+              0.17885212998953648,
+              16.141139622724324
+            ],
+            [
+              0.1995870980026666,
+              17.75525358499676
+            ],
+            [
+              0.2187281459919177,
+              19.369367547269192
+            ],
+            [
+              0.2387755170057062,
+              20.983481509541623
+            ],
+            [
+              0.2588974710088223,
+              22.597595471814056
+            ],
+            [
+              0.2802873239852488,
+              24.211709434086487
+            ],
+            [
+              0.29975378498784266,
+              25.82582339635892
+            ],
+            [
+              0.31905704899691045,
+              27.439937358631354
+            ],
+            [
+              0.3400502089934889,
+              29.054051320903785
+            ],
+            [
+              0.36006918898783624,
+              30.66816528317622
+            ],
+            [
+              0.38022563798585907,
+              32.28227924544865
+            ],
+            [
+              0.3999123789835721,
+              33.89639320772108
+            ],
+            [
+              0.41902697100886144,
+              35.51050716999352
+            ],
+            [
+              0.4402203999925405,
+              37.12462113226595
+            ],
+            [
+              0.45912214400595985,
+              38.738735094538384
+            ],
+            [
+              0.47927450799033977,
+              40.35284905681081
+            ],
+            [
+              0.4991776259848848,
+              41.966963019083245
+            ],
+            [
+              0.5186261649942026,
+              43.58107698135568
+            ],
+            [
+              0.5385045800067019,
+              45.19519094362811
+            ],
+            [
+              0.5588355470099486,
+              46.80930490590055
+            ],
+            [
+              0.5787891520012636,
+              48.42341886817297
+            ],
+            [
+              0.600486807001289,
+              50.03753283044541
+            ],
+            [
+              0.6195349420013372,
+              51.65164679271784
+            ]
+          ],
+          [
+            [
+              0.0,
+              1.6121644410249676
+            ],
+            [
+              0.01877066699671559,
+              3.224328882049935
+            ],
+            [
+              0.03900217299815267,
+              4.836493323074903
+            ],
+            [
+              0.059138445009011775,
+              6.44865776409987
+            ],
+            [
+              0.07973628002218902,
+              8.060822205124838
+            ],
+            [
+              0.0999810530047398,
+              9.672986646149806
+            ],
+            [
+              0.11905871500493959,
+              11.285151087174773
+            ],
+            [
+              0.13935652500367723,
+              12.89731552819974
+            ],
+            [
+              0.16068917501252145,
+              14.509479969224708
+            ],
+            [
+              0.18029476900119334,
+              16.121644410249676
+            ],
+            [
+              0.199605125002563,
+              17.733808851274645
+            ],
+            [
+              0.21973648501443677,
+              19.34597329229961
+            ],
+            [
+              0.24013891801587306,
+              20.958137733324577
+            ],
+            [
+              0.2591760760114994,
+              22.570302174349546
+            ],
+            [
+              0.27964572902419604,
+              24.182466615374516
+            ],
+            [
+              0.29983963901759125,
+              25.79463105639948
+            ],
+            [
+              0.3200589830230456,
+              27.406795497424447
+            ],
+            [
+              0.33904821501346305,
+              29.018959938449417
+            ],
+            [
+              0.35910346001037396,
+              30.631124379474386
+            ],
+            [
+              0.37961635799729265,
+              32.24328882049935
+            ],
+            [
+              0.3999509790155571,
+              33.85545326152432
+            ],
+            [
+              0.4201286660099868,
+              35.46761770254929
+            ],
+            [
+              0.4392163559969049,
+              37.079782143574256
+            ],
+            [
+              0.45905812102137133,
+              38.69194658459922
+            ],
+            [
+              0.4795531480049249,
+              40.30411102562419
+            ],
+            [
+              0.500345639011357,
+              41.916275466649154
+            ],
+            [
+              0.5205827040190343,
+              43.52843990767413
+            ],
+            [
+              0.5406403480155859,
+              45.14060434869909
+            ],
+            [
+              0.5598756100225728,
+              46.75276878972406
+            ],
+            [
+              0.5791222230182029,
+              48.36493323074903
+            ],
+            [
+              0.5993036419968121,
+              49.977097671774
+            ],
+            [
+              0.6202841190097388,
+              51.58926211279896
+            ]
+          ]
+        ],
+        [
+          [
+            [
+              0.0,
+              1.6137744505942482
+            ],
+            [
+              0.01900742799625732,
+              3.2275489011884964
+            ],
+            [
+              0.038267758005531505,
+              4.841323351782744
+            ],
+            [
+              0.05940142899635248,
+              6.455097802376993
+            ],
+            [
+              0.07932290900498629,
+              8.068872252971241
+            ],
+            [
+              0.09986948000732809,
+              9.682646703565489
+            ],
+            [
+              0.11958362002042122,
+              11.296421154159738
+            ],
+            [
+              0.13930056602112018,
+              12.910195604753985
+            ],
+            [
+              0.159989587002201,
+              14.523970055348233
+            ],
+            [
+              0.18003695301013067,
+              16.137744505942482
+            ],
+            [
+              0.19980635601677932,
+              17.75151895653673
+            ],
+            [
+              0.2191227250150405,
+              19.365293407130977
+            ],
+            [
+              0.2391953240148723,
+              20.979067857725227
+            ],
+            [
+              0.2598688190046232,
+              22.592842308319476
+            ],
+            [
+              0.2794020300207194,
+              24.20661675891372
+            ],
+            [
+              0.29978936800034717,
+              25.82039120950797
+            ],
+            [
+              0.3189527979993727,
+              27.43416566010222
+            ],
+            [
+              0.33883339300518855,
+              29.047940110696466
+            ],
+            [
+              0.3589628740155604,
+              30.661714561290715
+            ],
+            [
+              0.3798791310109664,
+              32.275489011884964
+            ],
+            [
+              0.39956337699550204,
+              33.889263462479214
+            ],
+            [
+              0.41896569399978034,
+              35.50303791307346
+            ],
+            [
+              0.43927349301520735,
+              37.116812363667705
+            ],
+            [
+              0.45925984799396247,
+              38.730586814261954
+            ],
+            [
+              0.47938552501727827,
+              40.344361264856204
+            ],
+            [
+              0.49905054600094445,
+              41.95813571545045
+            ],
+            [
+              0.5198652679973748,
+              43.5719101660447
+            ],
+            [
+              0.5395346290024463,
+              45.18568461663895
+            ],
+            [
+              0.5587345189996995,
+              46.799459067233194
+            ],
+            [
+              0.5789934600179549,
+              48.41323351782744
+            ],
+            [
+              0.5995146770146675,
+              50.02700796842169
+            ],
+            [
+              0.6196652819926385,
+              51.64078241901594
+            ]
+          ],
+          [
+            [
+              0.0,
+              1.6104492439728133
+            ],
+            [
+              0.01928556102211587,
+              3.2208984879456266
+            ],
+            [
+              0.04023247602162883,
+              4.83134773191844
+            ],
+            [
+              0.06024789801449515,
+              6.441796975891253
+            ],
+            [
+              0.08076473101391457,
+              8.052246219864067
+            ],
+            [
+              0.10050854002474807,
+              9.66269546383688
+            ],
+            [
+              0.1202237670077011,
+              11.273144707809694
+            ],
+            [
+              0.14091545800329186,
+              12.883593951782506
+            ],
+            [
+              0.16096587202628143,
+              14.494043195755319
+            ],
+            [
+              0.18056170802447014,
+              16.104492439728133
+            ],
+            [
+              0.20050655101658776,
+              17.714941683700946
+            ],
+            [
+              0.2214362750237342,
+              19.32539092767376
+            ],
+            [
+              0.24057333401287906,
+              20.93584017164657
+            ],
+            [
+              0.26072170300176367,
+              22.546289415619388
+            ],
+            [
+              0.2804794090043288,
+              24.1567386595922
+            ],
+            [
+              0.3013099570234772,
+              25.767187903565013
+            ],
+            [
+              0.32129251802689396,
+              27.377637147537826
+            ],
+            [
+              0.3415788320126012,
+              28.988086391510638
+            ],
+            [
+              0.36076762102311477,
+              30.598535635483454
+            ],
+            [
+              0.3804875800269656,
+              32.20898487945627
+            ],
+            [
+              0.40135580001515336,
+              33.819434123429076
+            ],
+            [
+              0.4213927620148752,
+              35.42988336740189
+            ],
+            [
+              0.4401897640200332,
+              37.04033261137471
+            ],
+            [
+              0.46031613802188076,
+              38.65078185534752
+            ],
+            [
+              0.479975997004658,
+              40.261231099320334
+            ],
+            [
+              0.5007329300278798,
+              41.87168034329314
+            ],
+            [
+              0.5203596480132546,
+              43.48212958726596
+            ],
+            [
+              0.5411663360137027,
+              45.092578831238775
+            ],
+            [
+              0.5614161350240465,
+              46.703028075211584
+            ],
+            [
+              0.5801914920157287,
+              48.3134773191844
+            ],
+            [
+              0.6003029920102563,
+              49.92392656315721
+            ],
+            [
+              0.6209447480214294,
+              51.534375807130026
+            ]
+          ]
+        ]
+      ]
+    }
+  ]
+}

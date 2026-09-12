@@ -1,0 +1,22 @@
+# Runtime dependencies for running llm-assay from a source checkout:
+#
+#     pip install -r requirements.txt
+#     python llm-assay.py --base-url http://localhost:8000/v1
+#
+# This project is run from a checkout; there is no packaging step. These must
+# stay in sync with the PEP 723 metadata block in llm-assay.py, which is what
+# `uv run` reads -- a test enforces that they do not drift.
+#
+# NOTE: `asyncio` is intentionally absent. It is part of the standard library
+# on every supported Python; the PyPI package of that name is a deprecated
+# placeholder ("Deprecated backport of asyncio; use the stdlib package
+# instead") that provides no module, and older releases of it shipped a
+# Python 3.3-era backport that could shadow the stdlib one.
+
+tokenizers
+transformers>=5.2.0
+tabulate
+numpy
+requests
+aiohttp
+pydantic>=2.12.5

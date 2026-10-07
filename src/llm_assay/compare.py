@@ -280,6 +280,12 @@ def load(path: str, across: Sequence[str] = ()) -> Tuple[Dict[str, dict], Option
 # them measures the setting rather than whatever the user meant to test.
 _COMPARABILITY: Tuple[Tuple[str, str], ...] = (
     ("model", "model"),
+    ("served_model", "model the endpoint reported"),
+    # The server's own account of what it loaded. This is the one entry here
+    # that can catch a model swap the command line cannot see: two runs with
+    # identical flags against an endpoint whose alias never changed are not
+    # comparable if the GGUF behind it did.
+    ("served_build", "server build"),
     ("latency_mode", "latency mode"),
     ("endpoint", "--endpoint"),
     ("exact_tg", "--exact-tg"),

@@ -93,6 +93,28 @@ class BenchmarkMetadata(BaseModel):
     # still load. --api-key is deliberately absent and must stay that way.
     base_url: Optional[str] = Field(None, description="Endpoint the run was made against")
     served_model_name: Optional[str] = Field(None, description="Model name sent in API calls")
+    # The endpoint's own answer, which is a different fact from the two above:
+    # both of those are what the *caller* said. An alias survives a reload that
+    # changes the weights, so a result whose only identity is the flag cannot
+    # say which build produced it. null means the endpoint did not answer --
+    # unknown, never "the same as the alias".
+    served_model: Optional[str] = Field(
+        None, description="Model the endpoint reported serving (/v1/models root)"
+    )
+    # What the *server* says it loaded, when it says anything. `model` and
+    # `served_model_name` are both the caller's side of the conversation, and an
+    # alias pinned to something stable -- llama.cpp answers "llama.cpp" by
+    # default -- survives a reload that changes the weights. llama.cpp publishes
+    # the GGUF path, the quantisation and its own build on /props; nothing else
+    # does, so None here means the endpoint published none of it and absent
+    # means the run predates this field. Never "the same build".
+    served_build: Optional[Dict[str, str]] = Field(
+        None,
+        description=(
+            "What the server reported serving (llama.cpp /props: model_path, "
+            "model_ftype, build_info); null if it published none"
+        ),
+    )
     tokenizer: Optional[str] = Field(None, description="Tokenizer override, if any")
     # "" rather than None when nothing fell back, for the same reason
     # extra_body uses {}: None is reserved for "written by a version that did

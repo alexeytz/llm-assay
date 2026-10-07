@@ -6,8 +6,8 @@ JSON events to PATH that an external visualizer can consume in real time.
 
 This document is the contract between llm-assay (the producer) and any
 consumer (live TUIs, web dashboards, post-hoc analyzers). The producer
-side is intentionally tiny — no UI, no rendering, no visualization-specific
-dependencies — so consumers can be implemented in any language.
+side is intentionally tiny - no UI, no rendering, no visualization-specific
+dependencies - so consumers can be implemented in any language.
 
 ## Versioning
 
@@ -138,7 +138,7 @@ SHOULD treat this as the final frame and exit cleanly.
 
 | Field    | Type   | Notes                                                                                   |
 |----------|--------|-----------------------------------------------------------------------------------------|
-| `status` | string | `"ok"` — suite ran to completion. `"interrupted"` — Ctrl+C / SIGINT. `"error"` — unhandled exception. |
+| `status` | string | `"ok"` - suite ran to completion. `"interrupted"` - Ctrl+C / SIGINT. `"error"` - unhandled exception. |
 
 Consumers SHOULD treat unknown `status` values as `"error"`.
 

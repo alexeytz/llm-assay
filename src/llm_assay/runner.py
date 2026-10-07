@@ -21,6 +21,8 @@ from .servermetrics import (
     ServerMetricsProbe,
     cached_followup_warning,
     concurrent_traffic_warning,
+    served_model,
+    server_build,
     stale_prefix_cache_warning,
 )
 
@@ -75,6 +77,13 @@ class BenchmarkRunner:
         )
         # Per-shape server counter deltas, keyed by (depth, pp, tg, concurrency, effort).
         self.server_deltas: Dict[Tuple[Any, ...], Any] = {}
+
+        # Read once inside the session, before the first shape, so a saved
+        # result names the build that produced its numbers rather than whatever
+        # is loaded when someone reads the file. None until asked, and still
+        # None if the endpoint publishes nothing.
+        self.served_model: Optional[str] = None
+        self.served_build: Optional[Dict[str, str]] = None
 
         # We need to track deltas from warmup to adapt prompts
         self.run_salt: Optional[str] = None
@@ -240,6 +249,8 @@ class BenchmarkRunner:
             max_concurrency=max_concurrency,
             base_url=cfg.base_url,
             served_model_name=cfg.served_model_name,
+            served_model=self.served_model,
+            served_build=self.served_build,
             tokenizer=cfg.tokenizer,
             tokenizer_fallback=self._tokenizer_fallback(),
             book_url=cfg.book_url,
@@ -323,6 +334,21 @@ class BenchmarkRunner:
                     should_warmup = True
 
                 tokenizer = self.prompt_gen.corpus.get_tokenizer()
+
+                # Before any measurement: an endpoint reloaded mid-suite would
+                # otherwise be recorded as whichever build answered last. Both
+                # are the *server's* account of itself -- `model` and
+                # `served_model_name` are the caller's, and an alias outlives
+                # the weights it was pointed at.
+                self.served_model = await served_model(
+                    session, self.config.base_url, self.config.api_key,
+                    self.config.served_model_name or self.config.model,
+                )
+                self.served_build = await server_build(
+                    session, self.config.base_url, self.config.api_key
+                )
+                if self.served_model and self.served_model != self.config.model:
+                    print(f"[INFO] endpoint reports serving: {self.served_model}")
 
                 if should_warmup:
                     self.delta_user, self.delta_context = await self.client.warmup(session, tokenizer)

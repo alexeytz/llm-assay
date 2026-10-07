@@ -1,4 +1,4 @@
-"""Optional scraping of a vLLM-style Prometheus ``/metrics`` endpoint.
+"""What the server says about itself: ``/metrics``, ``/v1/models``, ``/props``.
 
 Two things the client cannot see from timings alone, but which explain most of
 what makes a benchmark hard to read:
@@ -15,12 +15,22 @@ what makes a benchmark hard to read:
   dominant source of decode variance on MTP/Eagle setups. Recording it per run
   lets you explain the spread instead of just absorbing it.
 
+The other two endpoints answer a question the timings cannot: *which build
+produced these numbers*. `--model` and `--served-model-name` are both the
+caller's side of the conversation, and an alias pinned to something stable --
+llama.cpp answers the literal string "llama.cpp" -- survives a reload that
+changes the weights underneath it. ``served_model`` reads the endpoint's own
+answer, and ``server_build`` the GGUF, quantisation and server build llama.cpp
+publishes on ``/props``.
+
 Everything here is best-effort: a missing or unparseable endpoint disables the
-feature rather than failing the benchmark.
+feature rather than failing the benchmark. Absent is recorded as *unknown*,
+never as a difference.
 """
 
 from __future__ import annotations
 
+import os
 import re
 from typing import Dict, List, Optional, Tuple
 
@@ -212,6 +222,182 @@ def _metrics_url(base_url: str) -> str:
     if trimmed.endswith("/v1"):
         trimmed = trimmed[: -len("/v1")]
     return f"{trimmed}/metrics"
+
+
+_BUILD_FIELDS = ("model_path", "model_ftype", "build_info")
+
+
+def _build_summary(build: Dict[str, str]) -> str:
+    """One line naming the weights, for the console.
+
+    The saved artifact keeps ``/props`` verbatim; this is only the reading of
+    it. An HF cache path spells the repo as ``models--org--name``, and the repo
+    owner is the part that has already caused a mislabelled result once -- an
+    `unsloth/` conversion recorded as though it were the `Qwen/` one -- so it is
+    pulled out when it is there and the basename used when it is not.
+    """
+    parts: List[str] = []
+    path = build.get("model_path")
+    if path:
+        repo = next(
+            (seg[len("models--"):].replace("--", "/", 1)
+             for seg in path.split("/") if seg.startswith("models--")),
+            None,
+        )
+        name = os.path.basename(path)
+        parts.append(f"{repo} ({name})" if repo else name)
+    for field in ("model_ftype", "build_info"):
+        if build.get(field):
+            parts.append(build[field])
+    return " | ".join(parts)
+
+
+def _auth_headers(api_key: str) -> Dict[str, str]:
+    return {"Authorization": f"Bearer {api_key}"} if api_key and api_key != "EMPTY" else {}
+
+
+async def served_model(
+    session: aiohttp.ClientSession, base_url: str, api_key: str = "EMPTY",
+    requested: Optional[str] = None,
+) -> Optional[str]:
+    """What the endpoint says it is serving, from ``/v1/models``.
+
+    `--model` is what the *caller* asked for and doubles as the tokenizer id;
+    `--served-model-name` is an alias the API answers to. Neither is evidence of
+    which weights were loaded, and an alias is stable across a reload that
+    changes them.
+
+    Measured: a result recorded `model: "MY-DEPLOYMENT"` while `tune` had
+    reported `unsloth/Qwen3.8-27B-FP8` at launch and the endpoint later served
+    `cyankiwi/Qwen3.8-27B-AWQ-FP8`. The box had been re-loaded, and nothing in
+    the artifact could say which build the numbers belonged to.
+
+    ``root`` is the real identity where an engine publishes it; ``id`` is the
+    fallback. Best-effort: a server that does not answer is recorded as unknown
+    rather than failing the run, and absent means unknown, never "the same as
+    the alias" -- the whole point is not to guess.
+
+    **A listing with more than one entry is a catalogue, not an identity.**
+    Taking the first entry is right for an engine serving one model and wrong
+    for a router: measured against OpenRouter, whose ``/v1/models`` lists the
+    whole marketplace, this recorded ``typesafe/jev-router`` -- an unrelated
+    third-party model -- as the thing being probed. That is worse than
+    recording nothing, because an artifact that names the wrong weights reads
+    as provenance. So when the listing holds several entries, only an entry
+    matching ``requested`` is returned and anything else is unknown.
+    """
+    url = base_url.rstrip("/") + "/models"
+    try:
+        async with session.get(
+            url, headers=_auth_headers(api_key), timeout=aiohttp.ClientTimeout(total=10),
+        ) as response:
+            if response.status != 200:
+                return None
+            body = await response.json(content_type=None)
+    except Exception:
+        return None
+    if not isinstance(body, dict):
+        return None
+    entries = [e for e in (body.get("data") or []) if isinstance(e, dict)]
+    if len(entries) > 1:
+        # A catalogue. Only the requested model identifies anything here; the
+        # backend that actually served a request is reported per response, not
+        # here (see the probe's `providers`).
+        if not requested:
+            return None
+        want = requested.strip().lower()
+        for entry in entries:
+            ident = entry.get("id") or entry.get("root")
+            if ident and str(ident).strip().lower() == want:
+                return str(entry.get("root") or entry.get("id"))
+        return None
+    for entry in entries:
+        root = entry.get("root") or entry.get("id")
+        if root:
+            return str(root)
+    return None
+
+
+async def engine_version(
+    session: aiohttp.ClientSession, base_url: str, api_key: str = "EMPTY",
+) -> Optional[str]:
+    """The inference engine's own version string, from vLLM's ``/version``.
+
+    `served_model` says which weights, `server_build` says which llama.cpp
+    build; neither says which *engine* produced a number on a vLLM box. That is
+    a live gap rather than a hypothetical one: an engine upgrade changes
+    kernels, sampling and prefix caching, so two cells measured across one are
+    not comparable, and nothing in a saved result would have said so.
+
+    Best-effort and engine-specific: llama.cpp publishes no such endpoint and
+    records ``None`` here, which comparability reads as *unknown*, never as a
+    different version.
+    """
+    url = base_url.rstrip("/")
+    # /version sits at the server root, beside /metrics, not under /v1.
+    if url.endswith("/v1"):
+        url = url[: -len("/v1")]
+    try:
+        async with session.get(
+            url + "/version", headers=_auth_headers(api_key),
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as response:
+            if response.status != 200:
+                return None
+            body = await response.json(content_type=None)
+    except Exception:
+        return None
+    if isinstance(body, dict) and body.get("version"):
+        return str(body["version"])
+    return None
+
+
+def _props_url(base_url: str) -> str:
+    """Derive the llama.cpp /props URL from an OpenAI base URL (…/v1 -> …/props)."""
+    trimmed = base_url.rstrip("/")
+    if trimmed.endswith("/v1"):
+        trimmed = trimmed[: -len("/v1")]
+    return f"{trimmed}/props"
+
+
+async def server_build(
+    session: aiohttp.ClientSession, base_url: str, api_key: str = "EMPTY",
+) -> Optional[Dict[str, str]]:
+    """Which build llama.cpp is actually serving, from ``/props``.
+
+    ``/v1/models`` answers with the *alias*, and pinning that alias to something
+    stable -- ``llama.cpp`` -- is a sensible way to run a box, because swapping
+    the weights then needs no config change anywhere downstream. The cost is
+    that ``served_model`` identifies nothing: every result saved against such an
+    endpoint records the same string whatever was loaded.
+
+    llama.cpp publishes the missing fact itself. ``model_path`` names the GGUF
+    (an HF cache path carries the repo and the quant directory), ``model_ftype``
+    the quantisation, and ``build_info`` the server build -- so a result can say
+    which weights and which llama.cpp produced it without the operator having to
+    label anything.
+
+    Best-effort in the same sense as everything else here: vLLM and SGLang serve
+    no ``/props`` and are recorded as unknown, and a server that will not answer
+    must never fail the run. Absent means *unknown*, never "the same build".
+    """
+    url = _props_url(base_url)
+    try:
+        async with session.get(
+            url, headers=_auth_headers(api_key), timeout=aiohttp.ClientTimeout(total=10),
+        ) as response:
+            if response.status != 200:
+                return None
+            body = await response.json(content_type=None)
+    except Exception:
+        return None
+    if not isinstance(body, dict):
+        return None
+    build = {
+        field: str(body[field]) for field in _BUILD_FIELDS
+        if isinstance(body.get(field), (str, int, float)) and str(body[field])
+    }
+    return build or None
 
 
 def _parse(text: str) -> ServerCounters:

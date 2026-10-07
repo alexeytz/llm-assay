@@ -35,11 +35,19 @@ As of January 2nd, 2026, I wasn't able to find any existing benchmarking tool th
 - Seeded, reproducible corpus sampling (`--seed`) enabling *paired* A/B comparison of two configurations.
 - Statistically sound reporting: sample std, Student-t confidence intervals, and warnings when a run is underpowered.
 - Adaptive sampling (`--target-ci`): keep running until the result is precise enough, instead of guessing `--runs`.
-- Scrapes the server's Prometheus `/metrics` for prefix-cache hit rate and speculative-decode acceptance — vLLM counters diffed per shape, SGLang-style gauges reported as server-lifetime and labelled as such, and an unrecognised endpoint says so rather than disabling silently. Warns in both directions: when a cached-follow-up measurement got no cache hits, and when an ordinary run was unexpectedly served *from* the cache.
+- Scrapes the server's Prometheus `/metrics` for prefix-cache hit rate and speculative-decode acceptance - vLLM counters diffed per shape, SGLang-style gauges reported as server-lifetime and labelled as such, and an unrecognised endpoint says so rather than disabling silently. Warns in both directions: when a cached-follow-up measurement got no cache hits, and when an ordinary run was unexpectedly served *from* the cache.
+- Records what the **server** says it is serving, not just what was asked for.
+  `--model` and `--served-model-name` are both the caller's side of the
+  conversation, and an alias survives a reload that changes the weights
+  underneath it. Every saved result carries `served_model` (the endpoint's own
+  answer from `/v1/models`) and, where the engine publishes it, `served_build`
+  - llama.cpp's `/props` names the GGUF, the quantisation and the server build.
+  A missing value reads as *unknown*, never as "the same build".
 - `llm-assay.py compare` for paired / Welch significance testing between saved runs.
 - `llm-assay.py probe` for a **quality** check to sit beside the speed numbers: it
-  injects invented, self-contradicting statements into the corpus at a chosen depth and
-  measures whether the model still finds them. Throughput at 200k says nothing about
+  generates a synthetic event log to a chosen depth, injects a known anomaly into it,
+  and measures whether the model still finds it. It needs no corpus and no second
+  model. Throughput at 200k says nothing about
   whether the model can *use* 200k, and the features that make long context fast
   (quantized KV, windowed attention, chunked prefill) are the ones that can cost
   comprehension. Scored without a second model: a correct answer must name a surname
@@ -51,7 +59,9 @@ As of January 2nd, 2026, I wasn't able to find any existing benchmarking tool th
 
 # Current Limitations
 
-- Evaluates against `/v1/chat/completions` endpoint only.
+- Assumes an OpenAI-compatible API. `--endpoint chat` (the default) uses
+  `/v1/chat/completions`; `--endpoint completions` uses raw `/v1/completions`,
+  which skips the chat template and so separates engine cost from template cost.
 
 ## Setup
 
@@ -185,7 +195,7 @@ date: 2026-09-12 08:52:09 | latency mode: generation
 It's recommended to use "generation" latency mode to get prompt processing speeds closer to real numbers, especially on shorter prompts.
 By default, the script adapts the prompt size to match the specified value, regardless of the chat template applied. Use `--no-adapt-prompt` to disable this behavior.
 
-Within a single run the probability of accidental cache hits is small, so you rarely need to disable prompt caching on the server. **Across** runs it is not small at all: a fixed `--seed` sends byte-identical prompts, so a second invocation of the same command is served warm and prefill inflates — see [the trap section](#the-trap-a-fixed---seed-warms-the-cache-for-the-next-run) and `--cold`, which prevents it. You can add `--no-cache` that will add some random noise if you get cache hits.
+Within a single run the probability of accidental cache hits is small, so you rarely need to disable prompt caching on the server. **Across** runs it is not small at all: a fixed `--seed` sends byte-identical prompts, so a second invocation of the same command is served warm and prefill inflates - see [the trap section](#the-trap-a-fixed---seed-warms-the-cache-for-the-next-run) and `--cold`, which prevents it. You can add `--no-cache` that will add some random noise if you get cache hits.
 
 ### Arguments
 
@@ -196,14 +206,14 @@ Within a single run the probability of accidental cache hits is small, so you ra
 -   `--tokenizer`: HuggingFace tokenizer name or local path (Defaults to model name).
 -   `--pp`: List of prompt processing token counts (Default: [2048]).
 -   `--tg`: List of token generation counts (Default: [32]).
--   `--endpoint {chat,completions}`: Which route to benchmark (default `chat`). `completions` uses raw `/v1/completions` — no chat template, context and prompt concatenated — which reaches stacks that never implemented the chat route and isolates engine cost from template cost. Visible in the warmup: template overhead measures 9 tokens on the chat route and 0 on completions.
+-   `--endpoint {chat,completions}`: Which route to benchmark (default `chat`). `completions` uses raw `/v1/completions` - no chat template, context and prompt concatenated - which reaches stacks that never implemented the chat route and isolates engine cost from template cost. Visible in the warmup: template overhead measures 9 tokens on the chat route and 0 on completions.
 -   `--exact-tg`: Force output length to match `--tg` by sending `min_tokens=<tg>` and `ignore_eos=true` in benchmark requests. This is useful for fixed-OSL throughput runs on compatible servers such as vLLM.
 
     > **Caveat for speculative decoding.** `ignore_eos` makes the model continue past its natural stopping point, and long forced generations tend to degenerate into repetition. Repetitive text is unusually easy for a draft head to predict, so `--exact-tg` can *inflate* measured acceptance relative to real use. It buys determinism in output length at the cost of realism in acceptance; keep that in mind when benchmarking MTP/Eagle setups.
 -   `--depth`: List of context depths (Default: [0]).
 -   `--runs`: Number of runs per test (Default: 3).
 -   `--warmup-runs`: Number of discarded warmup runs per test shape (Default: 1). For concurrency `N`, each warmup run sends `N` requests. Also controls the number of discarded warmup probes for `--latency-mode generation`; it does not affect the initial prompt-adaptation warmup.
--   `--cold`: Guarantee a cold prefix cache by salting the corpus offsets per invocation, so a repeat run cannot be served from the cache the previous one populated. Measured: without it a second invocation of the same command sees 69.4% hits, with it every invocation sees 0.0%. `--no-cache` cannot do this — prefix caching matches the *prefix*, and its buster is appended to the end. Two `--cold` runs read different text, so `compare` will not pair them.
+-   `--cold`: Guarantee a cold prefix cache by salting the corpus offsets per invocation, so a repeat run cannot be served from the cache the previous one populated. Measured: without it a second invocation of the same command sees 69.4% hits, with it every invocation sees 0.0%. `--no-cache` cannot do this - prefix caching matches the *prefix*, and its buster is appended to the end. Two `--cold` runs read different text, so `compare` will not pair them.
 -   `--no-cache`: Add noise to requests to improve prefix caching avoidance. Also sends `cache-prompt=false` to the server.
 -   `--post-run-cmd`: Command to execute after each test run.
 -   `--book-url`: URL of a book to use for text generation (defaults to War and Peace,
@@ -228,13 +238,22 @@ Within a single run the probability of accidental cache hits is small, so you ra
 -   `--seed`: Seed corpus sampling. Makes a run reproducible, and makes two runs draw **identical** text for the same logical slot so they can be compared *pairwise*. With speculative decoding, content-driven acceptance variance is usually the dominant noise source, so pairing is far more sensitive than comparing two independent samples. Sampling is keyed, not sequential, so pairing survives even if one side issues a different number of warmup probes. The key is the *shape* -- `(depth, pp, tg, concurrency, run index, reasoning effort)` -- so pairing applies to two configs that differ in something **outside** it: thinking mode, `--extra-body`, a server-side change. Changing `--pp`, `--tg`, `--depth` or `--concurrency` draws different text *and* makes a different row in `compare`, so those sides have nothing to pair against each other; `compare` exits non-zero rather than reporting a clean run when no shape matched. Both `--reasoning-effort` and `--thinking` are *in* the key, so each arm of those sweeps reads its own text. That means a paired test across arms stays valid but gains no power from pairing -- and, more importantly, no arm warms the prefix cache for the next. `--thinking` needs this most: only `chat_template_kwargs` differs between its two requests, so sharing text would let the second arm's prefill be served from the cache the first arm built, inside a single invocation, with `--no-cache` powerless to stop it (its buster is appended *after* the prefix). `--thinking` joins the key only when it is sweeping, so a result saved without it still pairs with a new one.
 -   `--target-ci FRAC`: Adaptive sampling. Keep running a test shape until the decode 95% confidence interval is within `FRAC` of the mean (e.g. `0.03` for ±3%), instead of a fixed `--runs`. `--runs` becomes the minimum and `--max-runs` the cap (default `5 × --runs`).
 -   `--max-runs`: Upper bound on runs per shape when `--target-ci` is set.
--   `--legend`: Print an explanation of the table beneath it. Every entry leads with a plain sentence — `pp512` is *"how fast the model reads the prompt; it was handed a 512-token prompt (roughly 380 words of English)"* — and puts the mechanics one indent further in, so a first-time reader and someone who wants the formula are both served. Covers the `pp`/`tg`/`ctx_pp`/`@ d` row labels, the `(cN)`/`(think=)`/`(re=)` suffixes, and how `ttfr`, `est_ppt` and `e2e_ttft` differ. Only the rows and columns actually printed are described, so it never explains a `t/s (req)` column a `c1` table does not have. Off by default; with `--format md` it is appended to the saved file, fenced so the layout survives.
--   `--stats {std,ci,median}`: What the `±` column means — `std` (sample standard deviation, default) or `ci` (95% confidence interval of the mean). Use `ci` when deciding whether a difference between two runs is real.
+-   `--legend`: Print an explanation of the table beneath it. Every entry leads with a plain sentence - `pp512` is *"how fast the model reads the prompt; it was handed a 512-token prompt (roughly 380 words of English)"* - and puts the mechanics one indent further in, so a first-time reader and someone who wants the formula are both served. Covers the `pp`/`tg`/`ctx_pp`/`@ d` row labels, the `(cN)`/`(think=)`/`(re=)` suffixes, and how `ttfr`, `est_ppt` and `e2e_ttft` differ. Only the rows and columns actually printed are described, so it never explains a `t/s (req)` column a `c1` table does not have. Off by default; with `--format md` it is appended to the saved file, fenced so the layout survives.
+-   `--stats {std,ci,median}`: What the `±` column means - `std` (sample standard deviation, default), `ci` (95% confidence interval of the mean), or `median` (median ± IQR/2). Use `ci` when deciding whether a difference between two runs is real.
+
+    **This chooses the display only.** Every statistic is computed and saved
+    whichever you pick: `mean`, `std`, `median`, `iqr`, `ci95`, `n` and the raw
+    per-run `values[]` are all in the JSON regardless. And every decision the
+    tool makes is mean-based - `compare` runs paired-t and Welch on means,
+    `--target-ci` chases the interval on the mean, and `reliability_notes()`
+    reasons about that same interval. So `--stats median` changes what you read
+    and nothing the tool concludes; switching to it will not change an A/B
+    result.
 -   `--no-server-metrics`: Disable scraping of the server's Prometheus `/metrics` endpoint. By default llm-assay records prefix-cache hit rate and speculative-decode acceptance length per test shape, and warns when a cached-follow-up measurement got no cache hits.
--   `--thinking on|off`: Sweep thinking as a benchmark dimension; rows are labelled `(think=on)`/`(think=off)`. `off` sends both spellings servers honour — `reasoning_effort: "none"` and `chat_template_kwargs.enable_thinking: false` — because deployments honour different ones. Measured on a Qwen3.8 served by vLLM: prefill unchanged, decode **48.50 t/s thinking vs 38.15 t/s not**, tracking speculative acceptance 3.03 vs 2.36 — reasoning text is repetitive, so the draft head predicts it better and each token is cheaper.
+-   `--thinking on|off`: Sweep thinking as a benchmark dimension; rows are labelled `(think=on)`/`(think=off)`. `off` sends both spellings servers honour - `reasoning_effort: "none"` and `chat_template_kwargs.enable_thinking: false` - because deployments honour different ones. Measured on a Qwen3.8 served by vLLM: prefill unchanged, decode **48.50 t/s thinking vs 38.15 t/s not**, tracking speculative acceptance 3.03 vs 2.36 - reasoning text is repetitive, so the draft head predicts it better and each token is cheaper.
 -   `--reasoning-effort`: One or more reasoning effort levels to benchmark (e.g. `--reasoning-effort none low high`). Each level runs the full suite and results are labelled with it (e.g. `tg1024 (re=none)`). Sent as a top-level `reasoning_effort` field. Default: not sent.
 
-    > **Check the levels do anything before sweeping them.** Whether a graded level has an effect depends on the deployment's chat template, not the model card. On an unsloth conversion of Qwen3.8 served by vLLM, `low`, `medium` and `xhigh` render a *byte-identical* prompt — only `none` differs, by prefilling an empty `<think></think>` block — so sweeping them runs the suite repeatedly over a single configuration. `llm-assay.py tune <url>` probes the endpoint and reports which switches are live.
+    > **Check the levels do anything before sweeping them.** Whether a graded level has an effect depends on the deployment's chat template, not the model card. On an unsloth conversion of Qwen3.8 served by vLLM, `low`, `medium` and `xhigh` render a *byte-identical* prompt - only `none` differs, by prefilling an empty `<think></think>` block - so sweeping them runs the suite repeatedly over a single configuration. `llm-assay.py tune <url>` probes the endpoint and reports which switches are live.
 -   `--concurrency`: List of concurrency levels (number of concurrent requests per test) (Default: [1]).
 -   `--save-result`: File to save results to.
 -   `--format`: Output format: 'md', 'json', 'csv' (Default: 'md').
@@ -325,7 +344,7 @@ The script attempts to estimate network or processing latency to provide "server
 >
 > This matters because several engines do not enable prefix caching by default.
 > vLLM, for instance, keeps it opt-in for hybrid (Mamba/attention) models such as
-> Qwen3-Next and Qwen3.5 — `--enable-prefix-caching` is required there, and without
+> Qwen3-Next and Qwen3.5 - `--enable-prefix-caching` is required there, and without
 > it a 64k follow-up turn can read as ~150 t/s when the cached figure is ~1800 t/s.
 >
 > llm-assay now scrapes the server's `/metrics` endpoint and prints a loud
@@ -494,14 +513,51 @@ Where the numbers come from, and why they matter:
 | Detected | Source | What it changes |
 |---|---|---|
 | model + served name | `/v1/models` `root` / `id` | Fills in `--model` and `--served-model-name` |
-| `max ctx` | `/v1/models` `max_model_len` | Every suggested depth fits under it, with room for prompt and generation |
-| `prefix cache` | `vllm:cache_config_info` label | `--measure-cached-followup` is only suggested when the server can actually honour it |
-| `spec decode` | `vllm:spec_decode_*` counters | Decode presets switch to `--target-ci` sampling instead of a fixed `--runs` |
+| `build` | llama.cpp's `/props` (`model_path`, `model_ftype`, `build_info`) | Names the weights behind a pinned alias, which `/v1/models` cannot |
+| `max ctx` | `/v1/models` `max_model_len`; else llama.cpp's `/props` slot `n_ctx`, else `meta.n_ctx_train` | Every suggested depth fits under it, with room for prompt and generation |
+| `prefix cache` | `vllm:cache_config_info` label; else cached-token counters | `--measure-cached-followup` is only suggested when the server can actually honour it |
+| `spec decode` | `vllm:spec_decode_*` / `llamacpp:spec_decode_*` counters | Decode presets switch to `--target-ci` sampling instead of a fixed `--runs` |
 | `kv cache` | `kv_cache_size_tokens` | Concurrency levels are capped at what fits, so no request sits queued |
 | thinking switches | `/v1/chat/completions/render` | Which of `reasoning_effort=none`, `enable_thinking=false` and the graded levels actually change the prompt |
 
+Every suggested run carries the consequence of that detection with it, in the
+console output and in the generated runner, because the fact and the commands
+were previously in two places and the connection had to be supplied by the
+reader:
+
+```
+Suggested runs
+
+  prefix cache is ENABLED here, and two things below follow from it.
+  Every preset uses --seed $RANDOM: a fixed seed sends byte-identical
+  prompts, so a repeat invocation is served from the cache the previous
+  one filled. …
+  And --measure-cached-followup is included where it belongs, because
+  this server can actually honour it. Only prefill and TTFT move;
+  decode numbers are unaffected either way.
+```
+
+With caching off it says so instead, and explains why no cached-follow-up
+preset appears. With the status unknown it tells you how to settle it: run the
+smoke preset twice with a **fixed** seed and compare prefill - a large jump on
+the second run is the cache, not the server.
+
+**Only vLLM states prefix caching as a fact.** `cache_config_info` carries an
+`enable_prefix_caching` label, and that is the one place the status is asserted
+rather than inferred. Other engines publish the *evidence* instead: llama.cpp
+counts prompt tokens it served from cache, so a counter above zero proves
+caching is both enabled and working - which is what you need before trusting
+`--measure-cached-followup`. A counter reading zero is reported as **unknown,
+not off**, because it is cumulative and a freshly restarted server has simply
+not been hit yet. An engine publishing neither says so, and says it without
+blaming the URL.
+
+To settle it by hand on any engine: send one prompt twice and diff the
+cached-token counters. The benchmark already does exactly that per shape, which
+is what both prefix-cache warnings are built on.
+
 Detection is best-effort. A server with no readable `/metrics` still gets
-suggestions — built from conservative defaults and labelled as such — rather than
+suggestions - built from conservative defaults and labelled as such - rather than
 an error.
 
 ### Machine-readable detection
@@ -512,7 +568,7 @@ uv run llm-assay.py tune http://localhost:8000/v1 --json
 
 Emits the detection and the suggested presets as JSON. Each preset carries both an
 argv list you can exec directly and a rendered command string for logs. `null` means
-*unknown* rather than *off* — a server with no readable `/metrics` reports
+*unknown* rather than *off* - a server with no readable `/metrics` reports
 `"prefix_caching": null` and explains itself in `notes`. stdout is only ever JSON;
 the report and any error go to stderr.
 
@@ -563,7 +619,7 @@ been used before:
 | 8810 | 2nd | 69.4% | 9,795 | 471 ms |
 | 8810 | 3rd | 69.4% | 9,487 | 487 ms |
 
-Prefill inflated ~2.5×, est_ppt halved, and it stays warm for every later run. `--no-cache` does **not** help — its cache-buster
+Prefill inflated ~2.5×, est_ppt halved, and it stays warm for every later run. `--no-cache` does **not** help - its cache-buster
 is seed-derived, so it too is identical across invocations, and only the first use of
 it is cold.
 
@@ -575,7 +631,7 @@ metric: pp_throughput   test: paired   alpha=0.01
 d4096 pp512 tg32 inf                 3888.30         9707.13   +149.6%   0.0003  BETTER
 ```
 
-llm-assay warns above a 10% hit rate in a plain run, so this is no longer silent —
+llm-assay warns above a 10% hit rate in a plain run, so this is no longer silent -
 and `--cold` prevents it outright, salting the corpus per invocation so every run
 measures a genuine ingest.
 Prefill and TTFT move most, but the ordering is still detectable in decode: a paired
@@ -589,7 +645,7 @@ test. `tune` suggests `--seed $RANDOM` for exactly this reason.
 ## Comparing two runs statistically
 
 `llm-assay` characterises one endpoint. Comparing two *configurations* is a
-different job, and eyeballing overlapping `mean ± std` bars is a poor way to do it —
+different job, and eyeballing overlapping `mean ± std` bars is a poor way to do it -
 especially with speculative decoding, where run-to-run spread is driven by
 content-dependent acceptance and routinely exceeds the effect you are looking for.
 
@@ -617,9 +673,9 @@ d16384 pp2048 tg32 inf                 54.88           54.05     -1.5%   0.5396 
 - **Paired** test when both runs share a `--seed` (each run index saw identical
   text, so content variance cancels). **Welch's** unequal-variance test otherwise.
   Saved results carry a `corpus_fingerprint`, and a row whose two sides recorded
-  different fingerprints falls back to Welch no matter what the seeds say — the
+  different fingerprints falls back to Welch no matter what the seeds say - the
   seed is a proxy for "same text", and the fingerprint is the thing itself.
-  `--unpaired` forces Welch even when the seeds match — use it when the two runs
+  `--unpaired` forces Welch even when the seeds match - use it when the two runs
   are not genuinely paired (different corpora, or `--cold` on either side, which
   `compare` refuses to pair anyway).
 - Rows are keyed by depth, prompt size, generation size and phase, so a sweep over
@@ -635,10 +691,10 @@ d16384 pp2048 tg32 inf                 54.88           54.05     -1.5%   0.5396 
 
   That forces an **unpaired** test and says so. Both dimensions are part of the
   corpus key, so the two sides read different text and run *i* of each never saw
-  the same content — pairing would have nothing to cancel. If a single file swept
+  the same content - pairing would have nothing to cancel. If a single file swept
   the dimension itself it has two rows per shape, and `compare` refuses rather than
   silently keeping one.
-- Settings that differ between the two files are called out before the table —
+- Settings that differ between the two files are called out before the table -
   comparing across a change of `--exact-tg`, `--no-cache`, model, tokenizer, corpus
   or latency mode measures the setting, not the thing you meant to test:
 
@@ -654,12 +710,12 @@ d16384 pp2048 tg32 inf                 54.88           54.05     -1.5%   0.5396 
   a word that reads like a measurement. `--equivalence-margin` leaves the row
   untestable too, and marks `equivalence.testable: false` in the JSON, rather
   than claiming `EQUIVALENT` off a sample that cannot support it.
-- "no difference" is **not** evidence of equivalence — it may simply be
+- "no difference" is **not** evidence of equivalence - it may simply be
   underpowered. Raise `--runs`, or use `--target-ci`.
 
 ### Exit codes
 
-A benchmark that produced nothing must not report success — anything automated
+A benchmark that produced nothing must not report success - anything automated
 reading `$?` would take an empty table for a healthy run.
 
 | Situation | Exit code |
@@ -685,7 +741,7 @@ uv run llm-assay.py compare baseline.json candidate.json --equivalence-margin 0.
 ```
 
 `no difference` then splits into `EQUIVALENT` (demonstrably within ±3%) and
-`INCONCLUSIVE` (too noisy to tell — raise `--runs` or use `--target-ci`).
+`INCONCLUSIVE` (too noisy to tell - raise `--runs` or use `--target-ci`).
 
 ### Using A/B as a CI gate
 
@@ -696,10 +752,10 @@ uv run llm-assay.py compare baseline.json candidate.json \
 
 Exits non-zero when any shape is significantly **worse**, so a perf regression can
 block a merge or a deploy. **Use at least 3 runs per side**: a paired test divides by
-the spread of the *differences*, so two runs that drifted together — which is what
-speculative-decode acceptance does between invocations — read as certain at any shift
+the spread of the *differences*, so two runs that drifted together - which is what
+speculative-decode acceptance does between invocations - read as certain at any shift
 size. llm-assay warns when a significant verdict rests on fewer than 3 runs. Improvements never trip it, and direction is metric-aware
-— for `e2e_ttft`, `ttfr` and `est_ppt`, lower is better. Add `--json` to get the
+- for `e2e_ttft`, `ttfr` and `est_ppt`, lower is better. Add `--json` to get the
 verdicts as data; both the table and the JSON come from one analysis pass, so they
 cannot disagree.
 
@@ -707,7 +763,7 @@ cannot disagree.
 
 Decode throughput on a speculative-decoding setup can easily have a sample standard
 deviation of ~7% of the mean. At `--runs 3` the standard error is large enough that
-two runs of an *unchanged* config can land 10% apart — and, worse, a small `±` at
+two runs of an *unchanged* config can land 10% apart - and, worse, a small `±` at
 n=3 reads as precision when it is a small-sample artifact.
 
 llm-assay therefore:
@@ -727,8 +783,8 @@ Statistical reliability warnings:
 ## Checking quality, not just speed (`probe`)
 
 Throughput at 200k says nothing about whether the model can still *use* 200k, and
-the features that make long context cheap — quantized KV, windowed attention,
-chunked prefill — are the ones that can quietly cost comprehension. `probe`
+the features that make long context cheap - quantized KV, windowed attention,
+chunked prefill - are the ones that can quietly cost comprehension. `probe`
 generates a synthetic event log to a chosen depth, injects a known anomaly into
 it, and checks the model still finds it.
 
@@ -738,16 +794,70 @@ uv run llm-assay.py probe http://localhost:8000/v1 --model my-model \
 ```
 
 ```
-| depth | rung | at | sep | accuracy | 95% CI | partial | false+ | unanswered |
-|------:|:-----|---:|----:|---------:|:-------|--------:|-------:|-----------:|
-| 2048 | clean | - | - | 10/10 | [0.72, 1.00] | 0 | 0 | 0 |
-| 2048 | outlier | 0.50 | - | 10/10 | [0.72, 1.00] | 0 | 0 | 0 |
-| 2048 | log | 0.50 | 0.60 | 10/10 | [0.72, 1.00] | 0 | 0 | 0 |
+| depth | rung | at | sep | accuracy | 95% CI | partial | false+ | fabricated | unanswered |
+|------:|:-----|---:|----:|---------:|:-------|--------:|-------:|-----------:|-----------:|
+| 2048 | clean | - | - | 10/10 | [0.72, 1.00] | 0 | 0 | - | 0 |
+| 2048 | outlier | 0.50 | - | 10/10 | [0.72, 1.00] | 0 | 0 | - | 0 |
+| 2048 | log | 0.50 | 0.60 | 10/10 | [0.72, 1.00] | 0 | 0 | - | 0 |
 ```
 
 `tune` suggests a probe sized to the endpoint it detected, and `--write` puts it in
-the generated runner as its own preset — so the quality check travels with the
+the generated runner as its own preset - so the quality check travels with the
 throughput suite rather than being something you have to remember.
+
+What this subcommand found, across eight models and twenty-one pre-registered
+arms, is written up in
+[`docs/fabrication-programme/fabrication-findings.md`](docs/fabrication-programme/fabrication-findings.md):
+fabrication rises with document depth, detection falls, a low fabrication rate
+on its own means nothing, and every rule, exclusion and error is in the data
+appendix at the end of it.
+
+### What the model is actually shown
+
+The haystack is generated, not sampled from anything. Every line is one template
+filled from five fixed vocabularies with a seeded RNG:
+
+```
+[{date}] At {location}, {rank} {name} {action} {object}.
+```
+```
+[2142-09-12] At Harbour Vault, Engineer Vasquez monitored the plasma conduits.
+[2142-06-25] At Sector Four, Steward Vorst inspected the coolant loop.
+[2142-09-12] At Harbour Vault, Engineer Vasquez tested the plasma conduits.
+```
+
+5 ranks, 10 locations, 10 actions, 9 objects, 50 invented surnames, and dates
+across one fictional year. Lines are added until the log reaches the requested
+depth **measured with the real tokenizer**, then trimmed - built to length rather
+than sliced to it, so no entry is cut in half at either end.
+
+Three properties make this worth doing rather than lifting text from a book:
+
+-   **The surnames exist in no training set**, which is what lets scoring be
+    judge-free. A correct answer must name one of them, checked against the log's
+    own dictionary and required to match exactly one - so a reply hedging across
+    several suspects fails rather than scoring on the one it happened to include.
+    The model cannot supply the answer from parametric memory.
+-   **The needle is drawn from the same distribution as the haystack.** Every line
+    shares one template, so an injection cannot stand out by style, vocabulary or
+    familiarity. Three earlier rungs injected authored sentences into a real book
+    and were deleted for exactly this: they measured how eye-catching the injected
+    prose was. `docs/deprecated-rungs.md` records the experiments that showed it.
+-   **The generator guarantees the answer.** Background entries are constrained so
+    every `(name, date)` resolves to exactly one location, so the only impossibility
+    is the injected one and a "wrong" answer is genuinely wrong. It also plants
+    **benign same-name, same-date repeats at a single location** - deliberately,
+    because without them "the name that appears twice on one date" would solve the
+    task without ever reading a location. A generated 8k log runs ~308 lines with
+    ~42 such repeats and zero two-location pairs.
+
+Those repeats are also what fabrications are built out of: the documented failure
+mode is the model taking a real repeat and re-dating or re-locating one half, so
+it acquires the second location a contradiction needs.
+
+This is why `clean` is the expensive rung - proving absence means checking
+everything, and a model that cross-checks exhaustively can spend tens of
+thousands of reasoning tokens per trial at modest depths.
 
 No second model and no ground truth about any text are needed: the haystack and
 the anomalies are both generated here, so a correct answer has to contain a
@@ -757,16 +867,94 @@ several suspects fails rather than scoring on the one it happened to include.
 
 -   `--depths N …`: context depths to probe (default `4096 32768`).
 -   `--rungs R …`: which of `clean`, `outlier`, `log` to run (default: all).
-    `clean` injects nothing and is the control — asking "is anything wrong?" primes a
+    `clean` injects nothing and is the control - asking "is anything wrong?" primes a
     model to find something, and only these trials say how often it invents one.
     `outlier` injects a passage from another domain and is *meant* to be easy: it
     separates "cannot see the text at this depth" from "sees it and cannot reason
-    about it". `log` injects the contradiction — one person in two places on one
-    date — and is the measurement. All three draw the same generated haystack and
+    about it". `log` injects the contradiction - one person in two places on one
+    date - and is the measurement. All three draw the same generated haystack and
     are put the same question, which is what makes `clean` a control: a control
     drawn from a different distribution than the measurement measures a
     false-positive rate that does not transfer. Every line shares one template, so
     the needle cannot stand out by style, repetition or familiarity.
+-   `--reasoning-effort LEVEL`: send a top-level `reasoning_effort` and record
+    it as `reasoning_effort` in the result (an `--extra-body` value wins, being
+    merged last, and is recorded the same way - either a top-level
+    `reasoning_effort` or a router's `reasoning: {"effort": ...}`). Unset means the vendor's
+    default, and defaults differ: grok-4.3's is `low`, and its 0% false-positive
+    rate at d131,072 became 20% at `high` on the same haystacks, so two results
+    run at different settings - the default counting as a setting - are not a
+    comparison of models. Cannot be combined with `--thinking off`, which
+    already sends `none`.
+-   `--allow-binding-budget`: run even when `--max-tokens` cannot fit under the
+    endpoint's ceiling at some depth. Before the first trial the probe reads the
+    context window (vLLM's `max_model_len`, a router's `context_length`, or
+    llama.cpp's `n_ctx`) and a router's declared completion cap, and refuses a
+    budget that cannot fit: such a request is rejected or silently clamped. A
+    budget within 80% of the binding ceiling is allowed but warned about,
+    because it has no room to grow if trials truncate - v24 set its budget
+    *equal* to the provider's cap and lost 15 of 25 cells, and v32 used 87% of
+    the window at its deepest depth and lost 11 of 17.
+-   `--max-spend USD`: stop before the next trial once the cost the endpoint
+    reports in `usage.cost` reaches this many dollars. Checked between trials,
+    never during one, so a stop leaves a smaller cell rather than money spent
+    with nothing recorded. An endpoint whose pre-flight reply carries no cost
+    refuses the run (exit 3), because a cap the tool cannot measure is no cap.
+    The result records `max_spend`, `spent`, and `halted` - why the run stopped
+    early, or `null` - and a cell cut short records the trials it actually ran.
+-   `--calibrate-depth`: size each depth in the endpoint's own tokens. Hosted
+    haystacks are otherwise sized with a local tokenizer, and the log is
+    date-dense, so a vendor whose tokenizer merges digits sees far fewer tokens
+    than the label says - grok's billing implied about half. Two `max_tokens 1`
+    requests per depth (the question alone, and with a haystack) give the
+    endpoint's count of the haystack; the cells are then built at the scaled
+    size and keep their label. Recorded as `calibration`: per depth, the local
+    count, the endpoint's count, their `ratio` and the `build_depth` used.
+    Refuses on an endpoint that reports no `usage.prompt_tokens`. Hosted results
+    banked so far are nominal, and a calibrated run does not compare with them.
+-   `--answer-format line|cited`: `line` (the default, and every earlier result)
+    asks for one line - the surname, `OFFTOPIC` or `CONSISTENT`. `cited` asks for
+    that line and then the two log lines that show the impossibility, copied
+    verbatim. The verdict is scored from line 1 alone, exactly as `line` scores
+    it; lines 2-3 are only checked against the haystack. With the one-line
+    format, citation checking depends entirely on what a model volunteers while
+    reasoning, so fabricated evidence is visible on models that quote and
+    invisible on those that paraphrase or return no trace. Each cell under
+    `cited` records `evidence`: how many trials `offered` a log line, how many
+    cited a line the log lacks (`absent`), and how many `proves` an
+    impossibility with two real lines - which on `clean` cannot exist. Recorded
+    as `answer_format`; the two formats do not pool.
+-   `--vocabulary builtin|seeded`: which surnames fill the haystack. `builtin`
+    (the default) is the fixed list of fifty every earlier result used. `seeded`
+    generates fifty pronounceable nonsense surnames from `--seed` - the same
+    count, so the generator's guarantees hold unchanged - none of which contains
+    another or any other word in the log, because the scorer matches the
+    expected surname by substring. The scoring rests on a correct answer naming
+    a surname no training set contains, and a list published in a repository
+    cannot stay that way forever; a seeded list exists nowhere until the run
+    makes it. The two read different text from the same seed and do not compare,
+    which `vocabulary` and `vocabulary_kind` record.
+-   `--build-corpus DIR`: write every haystack the run would read - one file per
+    depth, rung, position and trial - plus a `manifest.json` holding each file's
+    sha256 and expected answer, the generator version, the tokenizer and the
+    vocabulary digest; then exit without contacting any endpoint, so no
+    `base_url` is needed. A haystack built from a seed is otherwise an
+    *inference* about what a trial read, true only while the generator, word
+    lists and sizing tokenizer are unchanged - and only the seed is recorded.
+-   `--corpus-dir DIR`: read the haystacks from such an archive instead of
+    generating them. Every file is checked against the manifest and the run
+    refuses (exit 3) on any mismatch, so an edited haystack fails loudly rather
+    than quietly becoming a different experiment. Depths, rungs, positions,
+    trials and seed come from the manifest; passing a different one is an error.
+    A replay reads exactly the bytes a live run with the same seed would build.
+-   `--no-preflight`: skip the one request sent before the first trial. The
+    pre-flight sends a tiny question exactly as the trials will - same model
+    name, thinking switch and `--extra-body` provider pin - and refuses to start
+    if it is rejected: HTTP 4xx or a reply with no `choices` exits **3**, and an
+    endpoint that does not answer at all exits **1**. A wrong name or pin fails
+    every trial identically, and those failures were once recorded as the model
+    declining to answer. When the endpoint lists the requested repository under
+    an alias, the refusal names the alias to use.
 -   `--save-transcripts PATH`: write each trial's answer and reasoning trace to PATH.
     The accuracy number cannot tell a model that never saw the injection from one
     that saw it and judged it consistent; the trace can, and that distinction is
@@ -775,7 +963,7 @@ several suspects fails rather than scoring on the one it happened to include.
     Attention is strongly position-dependent, so `0.1 0.5 0.9` separates that effect
     from depth rather than letting it hide inside every other number. For `log` the
     position is the *centre* between the contradiction's two halves, and a pair
-    centred at 0.9 cannot also span 0.6 of the log — so the span narrows
+    centred at 0.9 cannot also span 0.6 of the log - so the span narrows
     symmetrically near the ends and the `sep` column reports how far apart they
     actually were. Position and distance cannot both be held fixed there; the table
     publishes both rather than letting one be read as the other.
@@ -783,19 +971,189 @@ several suspects fails rather than scoring on the one it happened to include.
     so the default buys a wide interval; raise it for anything you intend to act on.
 -   `--max-tokens N`: answer budget (default `40000`). A thinking model scans the
     whole log before answering, so this grows with depth. Too small a budget does
-    not merely lose trials, it loses the *hard* ones — a trial the model struggles
-    with reasons longer and hits the ceiling — so the reported accuracy rises. The
+    not merely lose trials, it loses the *hard* ones - a trial the model struggles
+    with reasons longer and hits the ceiling - so the reported accuracy rises. The
     tool says so out loud past 20% unanswered. The `clean` control is the most
     expensive rung, because proving absence means checking everything.
 -   `--thinking on|off`, `--seed`, `--served-model-name`, `--json`, `--save-result`
     behave as they do elsewhere.
 
+### A false positive is not one phenomenon
+
+When the control rung answers wrongly, the model has done one of two very
+different things, and the `false+` count alone cannot say which. Sometimes it
+**manufactures the evidence** - quoting a log line the haystack does not
+contain, most often a real entry with one digit of its date changed or its
+location swapped. Sometimes it quotes only real lines and simply reasons wrongly
+- or reaches the *right* verdict and the one-line answer format extracts a
+surname anyway, which measures this probe rather than the model.
+
+The `fabricated` column splits them, mechanically and at trial time, against the
+haystack that trial actually read. The rule is that the **claim** a citation
+makes is `(date, place, surname)`: a false impossibility is precisely the
+assertion that one person was in two places on one date, so the rank, the verb
+and the object are decoration. The model is held to the claim, not to its
+wording - it paraphrases constantly while reasoning, and a rule that can be
+satisfied by loose typing is not measuring fabrication.
+
+**A quoted line the log lacks is not by itself a fabrication**, which is the
+part that takes measuring. In a 50-trial run at 8k, **10 of the 48 trials the
+model got right** still quoted at least one absent line: it misquotes while
+reasoning and then does not act on the misquote. So the absent claim must be
+*load-bearing* - it has to name the surname the reply names, or, for an
+`OFFTOPIC` answer, be the line the reply is calling foreign. Anything else is
+recorded as `misquoted` rather than counted as fabrication, which is the
+difference between measuring the model and measuring its typing.
+
+The saved result carries the split per cell as `false_positives` -
+`fabricated` / `misquoted` / `only_real` / `uncited`, a reply quoting nothing
+checkable being counted apart rather than folded in. `--save-transcripts`
+records each trial's `citations`: every absent claim, the nearest real line to
+each, and the whole reply. That is both what tells a changed digit from a line
+invented whole, and what lets a later refinement of the rule be applied to old
+results instead of re-measuring them.
+
+### What a saved probe result contains
+
+`--save-result` writes the table's data plus the provenance needed to say what
+produced it. At the top level, `floors` holds the retrieval floor at each depth
+that ran an `outlier` cell - `misses`, `trials` and `passed`, gated on MISS at
+no more than 30% of trials - so the qualification of every `clean` and `log`
+rate travels with the file instead of being recomputed by hand. Per cell, beside
+the counts shown in the table:
+
+-   `ci95_low` / `ci95_high`: the Wilson interval on the accuracy.
+-   `mentioned_while_reasoning`: how many trials named the injected text while
+    reasoning. This separates the two ways a rung fails - never saw the text,
+    against saw it and judged it consistent - which the accuracy number cannot.
+-   `traced`: how many trials returned any reasoning at all - the denominator
+    `mentioned_while_reasoning` needs. On an endpoint that withholds or
+    summarises the trace, "named the injection 0 times" says what the vendor
+    returns, not what the model saw: gpt-6-luna named it 0 times in 10 with a
+    trace on only 2.
+-   `false_positives`: the `fabricated` / `only_real` / `uncited` split above.
+    It is gated on the verdict, so read it with the next entry: a `FALSE+` is
+    only reachable on `clean`, where the question has no expected answer. On
+    `log` and `outlier` these four counts are structurally zero and say nothing
+    about whether the model invented anything.
+-   `absent_claim_trials`: how many trials quoted a log line the haystack does
+    not contain - on any rung, at any verdict, including unanswered ones. This
+    is the fabrication measure that survives the rung, and it exists because the
+    bucket above cannot see an invented line on a rung where the reply scores
+    `PARTIAL`. **Both are per-rung quantities.** Summing `fabricated` across
+    rungs divides a real rate by trials that could never contribute to it;
+    `probe.fabrication_rate(results, rung)` is the supported way to compute it,
+    and takes one rung by design.
+-   `uncited_with_trace`: of the `uncited` false positives, how many came with a
+    reasoning trace the citation check could not parse. "Uncited" alone
+    conflates two opposite things: a reply with no trace is unverifiable in
+    principle, while a trace that paraphrases its evidence - grok-4.3 wrote
+    "Achebe appears at both Cinder Yard and Lunar Base" rather than quoting the
+    log - is a gap in this tool. The table prints a note when it is non-zero.
+-   `usage`: the endpoint's own token counts summed over the cell -
+    `prompt_tokens`, `completion_tokens`, and `reasoning_tokens`,
+    `cached_tokens` and `cost` where the endpoint reports them - each with a
+    `_trials` count of how many trials reported it, plus `trials` for how many
+    reported any usage at all; `null` when none did. This is the billed unit,
+    which `reasoning_tokens` in a transcript is not: that one is the local
+    tokenizer's count of whatever trace the vendor chose to return. It is also
+    the **actual depth**: when the endpoint's mean `prompt_tokens` differs from
+    the nominal depth by more than 10%, the table says so, because hosted
+    haystacks are sized with a local tokenizer and a vendor's may count the same
+    text very differently. Each transcript entry carries its own `usage`.
+-   `separation`: the `sep` column; `null` for rungs with nothing to separate.
+-   `started_at` / `finished_at` / `duration_s`: when the cell ran and how long
+    it took. Recorded because a cell that ran slowly on a shared endpoint should
+    say so in its own artifact, rather than being reconstructed afterwards from
+    file timestamps - which is wrong by the length of any pause between trials.
+-   `degenerate`: how many of the cell's unanswered trials were **looping**
+    rather than working - a trace that repeats instead of progressing. Reported
+    apart from the rest because the advice differs and one version of it is
+    actively wrong: a trial that hit `--max-tokens` is told to raise the budget,
+    which for a loop simply buys a longer loop. Measured, genuine reasoning runs
+    11-26% unique words over its last 3,000 characters while observed loops read
+    1.6% and 2.5%, so the threshold does not need to be delicate.
+-   `spec_decode`: what speculative decoding did across the cell - `drafts`,
+    `draft_tokens`, `accepted` and the resulting `accept_length`. A generation
+    setting such as a draft-length cap is invisible to everything else a result
+    records: it moves neither the weights nor the engine build, so two cells
+    measured either side of a change look identical in the artifact and are not
+    comparable. `null` where the endpoint publishes no such counters, where a
+    counter went backwards (a restart inside the window), or where any one of
+    them is missing - a partial family gives a plausible wrong number. The
+    counters are server-global, so this detects a *change* in configuration and
+    is not a throughput measurement.
+
+Top level: `served_model`, `served_build`, `engine_version`,
+`tokenizer_fallback`, `extra_body` and `providers`. `engine_version` is the inference engine's own version
+where it publishes one (vLLM's `/version`) and `null` otherwise - an engine
+upgrade changes kernels, sampling and prefix caching, so cells measured across
+one do not pool. `tokenizer_fallback` is the
+substituted tokenizer's name when the requested one would not load and `null`
+when nothing fell back. **A depth is only a depth if the model's own tokenizer
+counted it**, so a fallback makes every depth an approximation - the probe warns
+before the first trial and heads the table with it.
+
+`extra_body` records any extra JSON fields `--extra-body` merged into each
+request (`{}` when none), and `providers` lists every backend that answered,
+taken from the response body rather than from `/v1/models`. Both matter against
+a **router**: an aggregator reports one model id for backends that may run
+different quantisations, so `served_model` cannot distinguish them. Pin one with
+`--extra-body 'provider={"only":["…"],"allow_fallbacks":false}'` - and if
+`providers` holds more than one name the pin did not hold, the cell mixed
+backends, and where those backends differ in precision it mixed that too. An
+empty list means no response named a provider, which is normal for a direct
+endpoint and reads as unknown, never as "all the same".
+
+`max_tokens` is the output budget the run used - not recorded before, although
+every void rule in the programme is a statement about it. `limits` records the
+ceilings the endpoint declared (`context_window`, `completion_cap`; `null`
+means it said nothing, not that there is no limit), and `budget_warnings` what
+was said about the budget against them. Each cell's `truncated` counts the
+trials that finished `length` - the budget ended them - and the table notes any
+cell where that is non-zero.
+
+`vocabulary` is a digest of the generator's word lists, the outlier snippet and
+the question: two results with different values read different text from the
+same seed. `vocabulary_kind` says which surname list it was, `builtin` or
+`seeded`; a corpus records the list itself, so a replay scores against the
+names it was built from. `corpus` is the digest of the archive manifest a `--corpus-dir` run
+read, `null` when the haystacks were generated. Each cell's `haystack_digest`
+covers every haystack it read, in order, so equal digests mean byte-identical
+inputs - what a paired comparison assumes and could otherwise only infer - and
+each transcript entry carries its own `haystack_sha256`.
+
+`preflight` records what the pre-flight request saw - its `finish_reason` and
+the `provider` that answered it - or `null` when `--no-preflight` skipped it.
+
+`--save-transcripts` writes one entry per trial, failures included:
+
+-   `trace_repetition`: the unique-word ratio over the trace's last 3,000
+    characters, or `null` when there is too little text to judge. Alphabetic
+    words only - one observed loop repeated `[date] - already checked` with the
+    date changing every time, so counting numbers would have hidden a phrase
+    that never varied.
+-   `started_at`, `duration_s`, `spec_decode`: the same three facts as above,
+    for the single trial rather than the cell. One trial per process is the
+    normal way to run a deep cell, so this is where a configuration change
+    becomes visible as a step between one trial and the next.
+-   `reply`, `finish_reason`: what was scored, and whether the server called the
+    reply complete. Only a clean stop counts as an answer.
+-   `reasoning_excerpt`, `reasoning_chars`, `reasoning_tokens`: the tail of the
+    reasoning trace and its size. The trace is where a model's working shows,
+    and reading it is what caught four scoring bugs that left the table looking
+    perfectly reasonable.
+-   `named_in_reasoning`: whether this trial named the injected text.
+-   `citations`: the fabrication check for this trial - how many log lines it
+    quoted, how many of those the haystack does not contain, and the nearest
+    real line to each invented one.
+
 Accuracy is a **proportion**, so the interval is Wilson rather than the Student-t
 used for throughput means: on a 0/1 rate a t-interval is wrong, and worst exactly
-where a working probe sits — at 0/6 it would report ±0.
+where a working probe sits - at 0/6 it would report ±0.
 
 Measured on a 262k-context Qwen3.8-27B, same haystack and same question at each
-depth — only what is asked of the model changes:
+depth - only what is asked of the model changes:
 
 | depth | retrieve (`outlier`) | reason (`log`) | invent (`clean`) |
 |---|---|---|---|
@@ -810,21 +1168,21 @@ logical contradiction, and invents one in every clean log it is shown
 (retrieval vs reasoning, p=0.0004; retrieval does not decay across the range,
 p=0.58).
 
-A needle-in-a-haystack test is exactly the `outlier` rung — at 200k it would
+A needle-in-a-haystack test is exactly the `outlier` rung - at 200k it would
 report near-perfect recall and call this context healthy. The failure is not
 silence but confident fabrication, and only the `clean` control makes it
 visible.
 
 **Always read `clean` beside any deep score**, and expect it to be the sharper
-signal. Its false-positive rate breaks once and then saturates — 0% at 2k, 12% at
+signal. Its false-positive rate breaks once and then saturates - 0% at 2k, 12% at
 16k, **71% at 32k** (p=0.0056 against 16k), then 85%, 89%, 100%. That single step
 is the tool's actual answer for this deployment: **trustworthy to ~16k,
 confabulating by 32k.** Once the control saturates, an accuracy figure stops
-meaning comprehension — it measures whether a fabrication landed on the right
+meaning comprehension - it measures whether a fabrication landed on the right
 name. Deep cells also lose trials the probe cannot score (a finished reasoning
-trace with empty content — 50% of `log` trials at 65k), counted as unanswered
+trace with empty content - 50% of `log` trials at 65k), counted as unanswered
 rather than guessed at.
-With thinking off at depth 4096 it scores **0/10** against **6/10** on — but that
+With thinking off at depth 4096 it scores **0/10** against **6/10** on - but that
 is a property of *this probe's answer format*, not of the model. Asked the same
 question with working permitted, thinking off scores **9/10**, slightly ahead of
 thinking on. The model needs *a* scratchpad and the think block is only one of
@@ -836,8 +1194,8 @@ do this with no scratchpad", which is a real question and not the same as
 ## Live progress stream (for external visualizers)
 
 `--emit-progress PATH` writes a stream of newline-delimited JSON events to
-`PATH` (or `-` for stdout) while the benchmark runs. External visualizers —
-live TUIs, web dashboards, post-hoc analyzers — consume that stream and
+`PATH` (or `-` for stdout) while the benchmark runs. External visualizers -
+live TUIs, web dashboards, post-hoc analyzers - consume that stream and
 render whatever they like.
 
 ```bash

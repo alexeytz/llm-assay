@@ -39,6 +39,11 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 
 from . import __version__
+# The engine-name families live there, and are imported rather than restated:
+# servermetrics had already been taught llama.cpp when tune had not, and two
+# copies of a list like that is exactly how the stale one goes unnoticed.
+from .servermetrics import _BUILD_FIELDS, _build_summary
+from .servermetrics import _COUNTERS as _SM_COUNTERS
 
 # Room left for the prompt, the generated tokens and the chat template on top of
 # any depth we propose. Nothing is gained by benchmarking a shape the server will
@@ -67,6 +72,7 @@ class Detected:
         self.kv_max_concurrency: Optional[float] = None
         self.block_size: Optional[int] = None
         self.sliding_window: Optional[int] = None
+        self.served_build: Optional[Dict[str, str]] = None
         self.spec_decode: Optional[bool] = None
         self.spec_acceptance_length: Optional[float] = None
         self.thinking_controls: Optional[Dict[str, bool]] = None
@@ -96,6 +102,103 @@ def _get(url: str, api_key: str, timeout: float = 8.0) -> Optional[requests.Resp
     except requests.RequestException:
         return None
     return resp if resp.status_code == 200 else None
+
+
+def _read_props(root: str, api_key: str) -> Dict[str, Any]:
+    """llama.cpp's ``/props``, or an empty dict. Read once, used twice."""
+    props = _get(f"{root}/props", api_key, timeout=4.0)
+    if props is None:
+        return {}
+    try:
+        body = props.json()
+    except ValueError:
+        return {}
+    return body if isinstance(body, dict) else {}
+
+
+def _llamacpp_context(
+    props: Dict[str, Any], entry: Optional[Dict[str, Any]],
+) -> Optional[int]:
+    """Context length for an engine that publishes no ``max_model_len``.
+
+    ``/props`` gives the *slot* context, which is the number that binds a single
+    request: a box launched with ``-c`` split across ``-np`` slots serves less
+    per request than its total. ``meta.n_ctx_train`` on ``/v1/models`` is the
+    weaker fallback -- it is what the model was trained for, not what this
+    server was launched with, so it can overstate a deliberately smaller run.
+    """
+    slot_ctx = _as_int((props.get("default_generation_settings") or {}).get("n_ctx"))
+    if slot_ctx:
+        return slot_ctx
+    if entry:
+        return _as_int((entry.get("meta") or {}).get("n_ctx_train"))
+    return None
+
+
+def _build_from_props(props: Dict[str, Any]) -> Optional[Dict[str, str]]:
+    """What the server says it loaded, when it says anything.
+
+    ``/v1/models`` answers with the *alias*, and pinning that alias to something
+    stable is sensible operations -- llama.cpp's default is the literal string
+    ``llama.cpp`` -- so `tune` was naming a box by a string that identifies
+    nothing, while the benchmark and the probe had both been taught to read
+    this. A tuning report is exactly where the reader decides whether a saved
+    result is still comparable, so it needs the same answer.
+    """
+    build = {
+        field: str(props[field]) for field in _BUILD_FIELDS
+        if isinstance(props.get(field), (str, int, float)) and str(props[field])
+    }
+    return build or None
+
+
+def _any_counter(metrics_text: str, logical: str) -> Optional[float]:
+    """First counter present for a logical value, across every engine spelling.
+
+    The names live in ``servermetrics`` and are read from there rather than
+    restated: they had already been taught llama.cpp when this had not, so
+    `tune` reported "spec decode not active" against a box running MTP at 95%
+    acceptance. A wrong fact is worse than an unknown, and two lists of engine
+    names is how the first one gets stale.
+    """
+    for name in _SM_COUNTERS.get(logical, ()):
+        value = _counter(metrics_text, name)
+        if value is not None:
+            return value
+    return None
+
+
+def _prefix_caching_from_evidence(
+    metrics_text: str, found: "Detected",
+) -> Optional[bool]:
+    """Whether prefix caching is on, for an engine that states no flag.
+
+    Only vLLM's ``cache_config_info`` asserts it. llama.cpp publishes the
+    *evidence* instead -- ``prompt_tokens_cached_total`` counts prompt tokens it
+    served from cache -- so a counter above zero proves caching is both enabled
+    and working, which is the thing a user actually needs to know before
+    trusting `--measure-cached-followup`.
+
+    Zero is **unknown, not off**: the counter is cumulative, so a freshly
+    restarted server reads zero for a cache that is enabled and simply has not
+    been hit yet. Same rule as the spec-decode counters above, and for the same
+    reason -- reporting "off" would talk someone out of a mode that works.
+    """
+    served = _any_counter(metrics_text, "prefix_hits")
+    if served is None:
+        found.notes.append(
+            "this engine publishes no prefix-caching flag and no cached-token "
+            "counter, so the status is unknown; send one prompt twice and diff "
+            "the counters if it matters"
+        )
+        return None
+    if served > 0:
+        return True
+    found.notes.append(
+        "prefix caching is instrumented but has served no cached tokens yet, so "
+        "whether it is enabled is unknown rather than off"
+    )
+    return None
 
 
 def _parse_cache_config(metrics_text: str) -> Dict[str, str]:
@@ -136,6 +239,10 @@ def detect(base_url: str, api_key: str = "EMPTY", model: Optional[str] = None) -
     """Interrogate an endpoint. Never raises for a server that answers partially."""
     found = Detected(base_url)
     root = _root(base_url)
+    # One read, two answers: the slot context and the build. Both are things
+    # only this endpoint can state, and neither is on /v1/models.
+    props = _read_props(root, api_key)
+    found.served_build = _build_from_props(props)
 
     resp = _get(f"{base_url.rstrip('/')}/models", api_key)
     if resp is None:
@@ -160,6 +267,15 @@ def detect(base_url: str, api_key: str = "EMPTY", model: Optional[str] = None) -
             if len(entries) > 1:
                 others = ", ".join(str(e.get("id")) for e in entries[1:])
                 found.notes.append(f"endpoint serves more than one model; also available: {others}")
+        if found.max_model_len is None:
+            # vLLM states it on /v1/models; llama.cpp does not, and answering
+            # "unknown" there cost an 8x underestimate -- a 262,144-token box
+            # was handed a 32,768 ceiling and a "long" preset labelled the
+            # deepest context this server accepts. Two fallbacks, in order of
+            # how binding they are: the slot's own n_ctx is what a single
+            # request may actually use, and the model's trained length is the
+            # weaker claim to fall back on.
+            found.max_model_len = _llamacpp_context(props, chosen)
         if found.max_model_len is None:
             found.notes.append(
                 "endpoint did not report max_model_len; depths assume a conservative 32768"
@@ -186,6 +302,12 @@ def detect(base_url: str, api_key: str = "EMPTY", model: Optional[str] = None) -
         return found
 
     labels = _parse_cache_config(metrics.text)
+    if not labels:
+        # Readable metrics that simply do not carry vLLM's config block. Saying
+        # "/metrics unreadable" there blames the wrong thing and sends the
+        # reader to check a URL that is answering fine -- and llama.cpp does
+        # publish the prefix-cache evidence, just not the flag.
+        found.prefix_caching = _prefix_caching_from_evidence(metrics.text, found)
     if labels:
         flag = labels.get("enable_prefix_caching")
         if flag is not None:
@@ -205,8 +327,8 @@ def detect(base_url: str, api_key: str = "EMPTY", model: Optional[str] = None) -
     # Absent means not configured; present-but-zero means unknown, not "off" --
     # reporting "off" there would talk a user out of the adaptive sampling their
     # decode numbers are about to need.
-    drafts = _counter(metrics.text, "vllm:spec_decode_num_drafts_total")
-    accepted = _counter(metrics.text, "vllm:spec_decode_num_accepted_tokens_total")
+    drafts = _any_counter(metrics.text, "spec_drafts")
+    accepted = _any_counter(metrics.text, "spec_accepted")
     if drafts is None:
         found.spec_decode = False
     elif drafts > 0:
@@ -355,10 +477,19 @@ def report(found: Detected) -> str:
     else:
         row("model", "unknown")
 
+    if found.served_build:
+        # Beside the model, never instead of it: one is what the endpoint
+        # answers to, the other is what it actually loaded.
+        row("build", _build_summary(found.served_build))
+
     row("max ctx", f"{_fmt_int(found.max_model_len)} tokens")
 
     if found.prefix_caching is None:
-        row("prefix cache", "unknown -- /metrics unreadable")
+        # Not always an unreadable endpoint any more: an engine can publish
+        # readable metrics that simply carry no flag and no cached-token
+        # counter. Every path that leaves this None appends a note saying
+        # which, so the row points there instead of naming one cause.
+        row("prefix cache", "unknown -- see note below")
     elif found.prefix_caching:
         row("prefix cache", "ENABLED -- cached-follow-up measurement is meaningful here")
     else:
@@ -394,6 +525,45 @@ def report(found: Detected) -> str:
     for note in found.notes:
         lines.append(f"  note: {note}")
     return "\n".join(lines)
+
+
+def cache_guidance(found: Detected) -> str:
+    """What this endpoint's cache state means for the runs suggested below.
+
+    The detection block states the fact and the commands embody the
+    consequence, but nothing connected them: a reader had to know that
+    `--seed $RANDOM` is there because caching is on, and that the absence of a
+    cached-follow-up preset is a decision rather than an oversight. Prefix
+    caching is the single easiest way to publish a confident wrong throughput
+    number, so the consequence is spelled out where the commands are.
+    """
+    if found.prefix_caching:
+        return (
+            "  prefix cache is ENABLED here, and two things below follow from it.\n"
+            "  Every preset uses --seed $RANDOM: a fixed seed sends byte-identical\n"
+            "  prompts, so a repeat invocation is served from the cache the previous\n"
+            "  one filled. Measured that way, prefill read 7.9k t/s cold and 26k t/s\n"
+            "  warm, and `compare` reported +110% between a configuration and itself.\n"
+            "  And --measure-cached-followup is included where it belongs, because\n"
+            "  this server can actually honour it. Only prefill and TTFT move;\n"
+            "  decode numbers are unaffected either way."
+        )
+    if found.prefix_caching is False:
+        return (
+            "  prefix cache is DISABLED here, so every prefill below is genuinely\n"
+            "  cold and those numbers need no defending. --measure-cached-followup is\n"
+            "  deliberately absent: with caching off its second request re-prefills\n"
+            "  the whole context and would be reported as a cached follow-up -- about\n"
+            "  a 10x misread at depth, with plausible-looking timings either way.\n"
+            "  Enable caching at the server first if that is the measurement you want."
+        )
+    return (
+        "  prefix cache status is UNKNOWN here, so the runs below assume nothing:\n"
+        "  --seed $RANDOM everywhere, and no cached-follow-up preset. To settle it,\n"
+        "  run the smoke preset twice with a FIXED seed and compare pp -- a large\n"
+        "  jump on the second run is the cache, not the server. llm-assay also warns\n"
+        "  on its own when a run it did not expect to be cached was served from one."
+    )
 
 
 def _target_args(found: Detected) -> List[str]:
@@ -529,7 +699,7 @@ def _probe_command(found: Detected, args: List[str],
 
 
 def suggestions(found: Detected) -> str:
-    lines = ["", "Suggested runs"]
+    lines = ["", "Suggested runs", "", cache_guidance(found)]
     for key, description, args in build_presets(found):
         lines.append("")
         lines.append(f"  # {key} -- {description}")
@@ -632,6 +802,9 @@ def render_script(found: Detected) -> str:
         "# Generated by `llm-assay.py tune` -- do not expect it to fit another endpoint.",
         f"# llm-assay {__version__}",
         "#" + detected,
+        "#",
+        "# What that means for the runs below:",
+        "#" + ("\n" + cache_guidance(found)).replace("\n", "\n# "),
         "#",
         "# Regenerate after the server is restarted with different settings:",
         f"#   uv run llm-assay.py tune {found.base_url} --write $0",

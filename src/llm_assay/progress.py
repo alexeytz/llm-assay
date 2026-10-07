@@ -2,8 +2,8 @@
 
 When the user passes ``--emit-progress PATH``, llm-assay writes a stream
 of newline-delimited JSON events to PATH (or stdout when PATH is ``-``).
-Consumers — separate tools, e.g. live TUIs, web dashboards, post-hoc
-visualizers — parse that stream and render whatever they like.
+Consumers - separate tools, e.g. live TUIs, web dashboards, post-hoc
+visualizers - parse that stream and render whatever they like.
 
 Schema spec:        docs/progress-schema.md
 Schema version tag: ``llm-assay-progress.v1``
@@ -33,7 +33,7 @@ class ProgressEmitter:
     """Append-only JSONL writer for benchmark progress events.
 
     Thread-safe (a lock guards the underlying file write). Methods are
-    no-throwing — emit failures are silently dropped so a broken consumer
+    no-throwing - emit failures are silently dropped so a broken consumer
     can't take down a benchmark run.
     """
 
@@ -180,5 +180,5 @@ class ProgressEmitter:
                 self._stream.write("\n")
                 self._stream.flush()
             except Exception:
-                # Consumer hung up / disk full — don't crash the benchmark.
+                # Consumer hung up / disk full - don't crash the benchmark.
                 pass

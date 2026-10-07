@@ -532,6 +532,35 @@
       "description": "Model name sent in API calls",
       "title": "Served Model Name"
     },
+    "served_model": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Model the endpoint reported serving (/v1/models root)",
+      "title": "Served Model"
+    },
+    "served_build": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "What the server reported serving (llama.cpp /props: model_path, model_ftype, build_info); null if it published none",
+      "title": "Served Build"
+    },
     "tokenizer": {
       "anyOf": [
         {

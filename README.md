@@ -33,6 +33,9 @@ tests two saved runs, and [Usage](#usage) covers every flag.
 
 ## Motivation
 
+*Kept as written in [llama-benchy](https://github.com/eugr/llama-benchy)'s README;
+the "I" below is its author.*
+
 `llama-bench` is a CLI tool that is a part of a very popular [llama.cpp](https://github.com/ggml-org/llama.cpp) inference engine. It is widely used in LLM community to benchmark models and allows to perform measurement at different context sizes.
 However, it is available only for llama.cpp and cannot be used with other inference engines, like vllm or SGLang.
 
@@ -45,6 +48,38 @@ vLLM has its own powerful benchmarking tool, but while it can be used with other
 - Random dataset is the only ones that allows to specify an arbitrary number of tokens, but randomly generated token sequence doesn't let you adequately measure speculative decoding/MTP.
 
 As of January 2nd, 2026, I wasn't able to find any existing benchmarking tool that brings llama-bench style measurements at different context lengths to any OpenAI-compatible endpoint.
+
+### Why llm-assay
+
+It started with an itch: two RTX 3090s and the NVLink bridge on the side that
+would not let me sleep. Reddit said it helps a lot. Every LLM I asked said the
+same. Actual numbers? Nobody had any. Plenty of confident opinions, no data.
+
+So I needed a tool I could test and trust. Cloned [llama-benchy](https://github.com/eugr/llama-benchy) as the base
+and rebuilt it - my way or the llm-assay.
+
+The first lesson: the obvious way to measure will lie to you with a straight
+face. `NCCL_P2P_DISABLE=1` does not actually turn NVLink off. And an A/B test of
+a config against itself picked a winner: same command, run twice, and `compare`
+reported the second one +110% on prefill, p = 0.0000, BETTER. It was served from
+the prefix cache the first run had warmed up, for free. Even with the cache out
+of the way, two runs of an unchanged config at `--runs 3` on a speculative
+decoding endpoint routinely land 10% apart on decode... and a tight-looking
+`±` says nothing about it. Hence the confidence intervals, the paired tests,
+and a tool that reads the server's own counters before believing a word it
+says.
+
+Then a different question moved in: how much can you rely on an LLM you only
+reach through an endpoint? It came out of a discussion about an AI agent that
+crashed mid-refund, came back with no record of it, and refunded again. Double
+refund. Which weights, which precision, which settings, how long it was allowed
+to think - none of that is yours to see. So `probe` hands a model a log where
+the right answer is known, and asks what is wrong with it. The verdict is in
+[`docs/fabrication-programme/fabrication-findings.md`](docs/fabrication-programme/fabrication-findings.md):
+up to about 4,000 tokens it is boring, in the good way. Past that, you get a
+sample.
+
+Measure your own endpoint.
 
 ## Features
 

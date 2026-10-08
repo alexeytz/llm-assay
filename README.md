@@ -378,7 +378,9 @@ Within a single run the probability of accidental cache hits is small, so you ra
     > **Check the levels do anything before sweeping them.** Whether a graded level has an effect depends on the deployment's chat template, not the model card. On an unsloth conversion of Qwen3.8 served by vLLM, `low`, `medium` and `xhigh` render a *byte-identical* prompt - only `none` differs, by prefilling an empty `<think></think>` block - so sweeping them runs the suite repeatedly over a single configuration. `llm-assay.py tune <url>` probes the endpoint and reports which switches are live.
 -   `--concurrency`: List of concurrency levels (number of concurrent requests per test) (Default: [1]).
 -   `--save-result`: File to save results to.
--   `--format`: Output format: 'md', 'json', 'csv' (Default: 'md').
+-   `--format`: Output format: 'md', 'json', 'csv'. Default: taken from the
+    `--save-result` extension (`.json`, `.csv`, `.md`), else 'md'. An explicit
+    `--format` that contradicts the extension still wins, with a warning.
 -   `--version`: Print the version (`VERSION` file plus the short commit id) and exit.
 -   `--save-total-throughput-timeseries`: Save calculated TOTAL throughput for each 1 second window inside peak throughput calculation during the run (default: off). One series per reported peak, index-aligned with `peak_throughput.values`; the largest point of a series equals the peak saved beside it.
 -   `--save-all-throughput-timeseries`: Save calculated throughput timeseries for EACH individual request (default: off).

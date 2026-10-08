@@ -41,6 +41,30 @@ def _split_outside_json(text: str) -> List[str]:
     return parts
 
 
+#: Extensions that name a result format, for when --format is not given.
+_FORMAT_BY_EXTENSION = {".json": "json", ".csv": "csv", ".md": "md", ".markdown": "md"}
+
+
+def resolve_format(fmt: Optional[str], save_result: Optional[str]) -> str:
+    """The format to write, from --format, else the --save-result extension.
+
+    The format used to come from --format alone, defaulting to md, so
+    `--save-result run.json` wrote a Markdown table into a file named .json --
+    which `compare` then cannot read, long after the run that made it. An
+    explicit --format still wins; one that contradicts the extension is almost
+    always a slip, so it is said out loud rather than silently obeyed.
+    """
+    ext = os.path.splitext(save_result)[1].lower() if save_result else ""
+    by_ext = _FORMAT_BY_EXTENSION.get(ext)
+    if fmt is None:
+        return by_ext or "md"
+    if by_ext and by_ext != fmt:
+        print(f"[WARNING] --format {fmt} writes {fmt.upper()} into a file named "
+              f"'{os.path.basename(save_result or '')}'; drop --format to take "
+              f"the format from the extension", file=sys.stderr)
+    return fmt
+
+
 class BenchmarkConfig(BaseModel):
     base_url: str = Field(..., description="OpenAI compatible endpoint URL")
     api_key: str = Field(..., description="API Key for the endpoint")
@@ -638,9 +662,10 @@ class BenchmarkConfig(BaseModel):
         parser.add_argument(
             "--format",
             type=str,
-            default="md",
+            default=None,
             choices=["md", "json", "csv"],
-            help="Output format",
+            help="Output format. Default: taken from the --save-result extension "
+                 "(.json, .csv, .md), else md",
         )
         parser.add_argument(
             "--save-total-throughput-timeseries",
@@ -764,7 +789,7 @@ class BenchmarkConfig(BaseModel):
             post_run_cmd=args.post_run_cmd,
             concurrency_levels=args.concurrency,
             save_result=args.save_result,
-            result_format=args.format,
+            result_format=resolve_format(args.format, args.save_result),
             save_total_throughput_timeseries=args.save_total_throughput_timeseries,
             save_all_throughput_timeseries=args.save_all_throughput_timeseries,
             exit_on_first_fail=args.exit_on_first_fail,

@@ -786,6 +786,14 @@ def as_dict(found: Detected) -> Dict[str, Any]:
     }
 
 
+def runner_keys(found: Detected) -> List[str]:
+    """Every preset the written runner offers, in its order: the benchmark
+    presets, then `probe`, which is assembled separately. The confirmation
+    message counts from here; counting `build_presets` alone told users a
+    six-preset runner had five."""
+    return [key for key, _, _ in build_presets(found)] + [probe_preset(found)[0]]
+
+
 def _script_name(found: Detected) -> str:
     name = found.served_model or found.hf_model or "endpoint"
     return "run-" + re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip("-").lower() + ".sh"
@@ -971,7 +979,7 @@ def main() -> int:
         handle.write(render_script(found))
     os.chmod(path, os.stat(path).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     where = sys.stderr if args.as_json else sys.stdout
-    print(f"\nWrote {path} ({len(build_presets(found))} presets). Run it with:", file=where)
+    print(f"\nWrote {path} ({len(runner_keys(found))} presets). Run it with:", file=where)
     print(f"    {path if path.startswith('/') else './' + path.lstrip('./')} smoke", file=where)
     return 0
 

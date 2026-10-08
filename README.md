@@ -4,6 +4,33 @@ Prompt-processing and decode speed at real context depths, against vLLM, SGLang 
 llama.cpp, with confidence intervals, paired A/B significance testing, prefix-cache
 trap detection, and a long-context quality probe.
 
+Inspired by llama.cpp's [`llama-bench`](https://github.com/ggml-org/llama.cpp) and
+[llama-benchy](https://github.com/eugr/llama-benchy).
+
+## TL;DR
+
+```bash
+# 1. Install uv (macOS / Linux; for Windows see Setup below)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# 2. Get llm-assay. There is no install step: uv resolves the dependencies on first run
+git clone https://github.com/alexeytz/llm-assay.git
+cd llm-assay
+
+# 3. Point tune at your endpoint. It detects the model, context window, prefix
+#    caching and speculative decoding, and suggests runs sized to that server
+uv run llm-assay.py tune http://localhost:8000/v1
+
+# 4. Save those runs as a script and start with the smoke test
+uv run llm-assay.py tune http://localhost:8000/v1 --write ./run-local.sh
+./run-local.sh smoke
+```
+
+`./run-local.sh --help` lists the other presets: a depth sweep, decode, concurrency,
+the deepest context the server accepts, and `probe` for quality. Results land in
+`results/` as JSON. From there, [`compare`](#comparing-two-runs-statistically) A/B
+tests two saved runs, and [Usage](#usage) covers every flag.
+
 ## Motivation
 
 `llama-bench` is a CLI tool that is a part of a very popular [llama.cpp](https://github.com/ggml-org/llama.cpp) inference engine. It is widely used in LLM community to benchmark models and allows to perform measurement at different context sizes.
@@ -56,6 +83,62 @@ As of January 2nd, 2026, I wasn't able to find any existing benchmarking tool th
 - Can save granular time-series data for token generation when JSON output is used (`--save-total-throughput-timeseries` and `--save-all-throughput-timeseries`).
 - Runs a coherence test after warmup to verify model responds correctly (default, can be skipped with `--skip-coherence`).
 - Auto-detects HuggingFace model name from the endpoint's `/models` endpoint when `--model` is not specified.
+
+## How it differs from upstream
+
+llm-assay started from [llama-benchy](https://github.com/eugr/llama-benchy) at
+`e9be344`. Its core is still upstream's: the streaming client, prompt
+construction, the result tables and the progress stream grew out of that code.
+Every upstream flag still works (`--enable-prefix-caching` is accepted under
+its new name, `--measure-cached-followup`), and none was removed. What changed:
+
+**Measurement and statistics.**
+- Sample standard deviation (`ddof=1`) with a Student-t 95% confidence interval,
+  where upstream reports the population standard deviation and no interval.
+  At three runs the t multiplier is 4.30, not 1.96.
+- `--target-ci` samples until the interval is tight enough (`--max-runs` caps
+  it), and underpowered runs are flagged with the run count that would resolve
+  them.
+- `--seed` makes corpus sampling deterministic and keyed to each shape, so two
+  configurations read identical text and `compare` can run a paired test.
+  Upstream picks the slice with an unseeded random start. `--cold` adds a
+  per-process salt so repeated runs never share a cached prefix.
+- `--reasoning-effort` and `--thinking on|off` as swept dimensions;
+  `--endpoint completions` for the raw `/v1/completions` route, which skips the
+  chat template; `--stall-timeout`, a configurable coherence check, `--stats`
+  and `--legend`.
+
+**Knowing what the server actually did.**
+- Reads the server's Prometheus `/metrics` (vLLM, llama.cpp, SGLang) for
+  prefix-cache hit rate and speculative-decode acceptance, per shape, and per
+  phase in the cached-follow-up mode.
+- Warns when a cached-follow-up measurement got no cache hits, when an ordinary
+  run was served from a cache an earlier run filled (the trap where the same
+  command run twice reports a large "improvement" against itself), and when
+  another client's traffic shares the measurement window.
+- Saved results record what the server says it is serving (`served_model`,
+  `served_build`), a fingerprint of the text each shape read, error messages
+  from failed requests, any tokenizer fallback, and the full invocation, so two
+  result files can be checked for comparability.
+
+**Honest output.**
+- A run that measured nothing, or lost a whole shape, exits non-zero;
+  upstream exits 0 unless interrupted.
+- `peak t/s` is omitted when the server delivers tokens without timing to
+  derive a rate from, rather than printing an artifact.
+
+**New subcommands.**
+- `compare`: paired or Welch significance testing between saved runs, with an
+  equivalence test for proving a change harmless, usable as a CI gate.
+- `tune`: detects the model, context window, prefix caching, speculative
+  decoding, KV-cache capacity and which thinking switches are live, then
+  suggests runs sized to that server and can write them as a script.
+- `probe`: a long-context quality check, with the study it was built for in
+  [`docs/fabrication-programme/fabrication-findings.md`](docs/fabrication-programme/fabrication-findings.md).
+
+**Packaging.** Upstream installs as a package with its own console
+command. llm-assay is a single `llm-assay.py` carrying its own dependency list
+(PEP 723), run with `uv` and nothing to install.
 
 # Current Limitations
 

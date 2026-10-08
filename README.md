@@ -62,6 +62,10 @@ As of January 2nd, 2026, I wasn't able to find any existing benchmarking tool th
 - Assumes an OpenAI-compatible API. `--endpoint chat` (the default) uses
   `/v1/chat/completions`; `--endpoint completions` uses raw `/v1/completions`,
   which skips the chat template and so separates engine cost from template cost.
+- Most "non-standard" endpoints only differ in their prefix, which `--base-url`
+  already handles. A gateway at
+  `https://gw.example.net/acct/gw/openai/chat/completions` just needs
+  `--base-url https://gw.example.net/acct/gw/openai`.
 
 ## Setup
 

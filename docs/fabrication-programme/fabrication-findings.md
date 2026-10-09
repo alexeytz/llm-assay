@@ -6,8 +6,7 @@ tabulates every cell the programme ran - except in section 9, which reports
 what the endpoints themselves did and says where each of its figures comes
 from. The figures are generated from the raw
 per-trial result files by a script that re-pools them and refuses to plot any
-cell whose pooled numbers disagree with that appendix; neither that script nor
-the raw files are part of the published tree.*
+cell whose pooled numbers disagree with that appendix.*
 
 ## TL;DR
 

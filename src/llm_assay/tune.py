@@ -673,17 +673,56 @@ def probe_preset(found: Detected) -> Tuple[str, str, List[str]]:
     ladder = [d for d in depth_ladder(found) if d > 0][:3]
     if not ladder:
         ladder = [4096]
-    # `log` and `clean` only. The prose rungs were each measured reading an
-    # artifact rather than the model -- authored salience in one case,
-    # structural repetition in the other -- and neither reaches a usable score
-    # at 2k where the task is trivial. Suggesting them would hand someone a
-    # number that looks like a measurement and is not.
+    # All three rungs. `outlier` is the retrieval floor: without it the probe
+    # warns that every clean and log rate is unqualified, because a model that
+    # is not reading the log scores perfectly on `clean`. An earlier version
+    # suggested `log clean` only, citing the deleted prose rungs -- which
+    # measured artifacts -- but `outlier` was never one of those.
     return (
         "probe",
         "does the model still USE the context, at the depths above",
-        ["--depths", *[str(d) for d in ladder], "--rungs", "log", "clean",
-         "--trials", "10", "--thinking", "on", "--max-tokens", "40000"],
+        ["--depths", *[str(d) for d in ladder], "--rungs", "clean", "outlier",
+         "log", "--trials", "10", "--thinking", "on",
+         "--max-tokens", str(probe_budget(found, max(ladder)))],
     )
+
+
+#: Share of the room left at the deepest probe depth that the suggested budget
+#: takes. Below the probe's own 80% warning, so the suggestion runs clean.
+_PROBE_BUDGET_SHARE = 0.75
+#: The budget when the window is unknown. Too small for a reasoning model at
+#: depth -- traces of 80,000-225,000 tokens were measured -- which the output
+#: says, rather than inventing a window.
+_PROBE_BUDGET_UNKNOWN = 40000
+
+
+def _probe_budget_note(found: Detected, args: List[str]) -> str:
+    """What the suggested probe budget means for how long it takes."""
+    budget = args[args.index("--max-tokens") + 1]
+    if found.max_model_len is None:
+        return ("  --max-tokens " + budget + " because the window is unknown. A reasoning\n"
+                "  model at depth can need far more; trials that hit it finish `length`,\n"
+                "  and the probe notes them. Raise it once you know the window.")
+    return ("  --max-tokens " + budget + " is three quarters of what the window leaves at\n"
+            "  the deepest depth. Truncated trials are the hard ones, so the budget is\n"
+            "  kept large; a reasoning model can spend tens of minutes on one deep trial.")
+
+
+def probe_budget(found: Detected, deepest: int) -> int:
+    """The probe's --max-tokens: as large as the window allows, with margin.
+
+    Truncated trials are the hard ones, so a small budget quietly reports the
+    easy subset. A fixed 40,000 did exactly that on a reasoning model whose
+    traces at depth ran to 80,000-225,000 tokens. Sized from the detected
+    window instead: three quarters of what is left at the deepest depth after
+    the prompt overhead, rounded down to a thousand.
+    """
+    if found.max_model_len is None:
+        return _PROBE_BUDGET_UNKNOWN
+    from .probe import PROMPT_OVERHEAD
+    room = found.max_model_len - deepest - PROMPT_OVERHEAD
+    budget = int(room * _PROBE_BUDGET_SHARE) // 1000 * 1000
+    return max(1000, budget)
 
 
 def _probe_command(found: Detected, args: List[str],
@@ -714,6 +753,8 @@ def suggestions(found: Detected) -> str:
         "  nothing about whether the model can still use that depth, and the settings\n"
         "  that make long context cheap are the ones that can cost comprehension."
     )
+    lines.append("")
+    lines.append(_probe_budget_note(found, args))
     lines.append("")
     lines.append(
         "  --seed $RANDOM is deliberate: a fixed seed sends byte-identical prompts, so a\n"
@@ -883,7 +924,9 @@ def render_script(found: Detected) -> str:
         "esac",
         "",
         'if [[ -n "${IS_PROBE:-}" ]]; then',
-        '  args+=(--seed "$SEED" --save-result "$RESULT")',
+        # Transcripts too: the fabrication evidence -- which lines a model
+        # cited, and whether they exist -- lives there, not in the result.
+        '  args+=(--seed "$SEED" --save-result "$RESULT" --save-transcripts "${RESULT%.json}-transcripts.json")',
         "else",
         '[[ -n "$RUNS" ]] && args+=(--runs "$RUNS")',
         "# shellcheck disable=SC2206",

@@ -41,6 +41,33 @@ def _split_outside_json(text: str) -> List[str]:
     return parts
 
 
+#: The one environment variable every subcommand reads its API key from.
+API_KEY_ENV = "LLM_ASSAY_API_KEY"
+
+
+def resolve_api_key(cli: Optional[str], *fallback_env: str) -> str:
+    """The API key: --api-key if given, else LLM_ASSAY_API_KEY, else any
+    subcommand-specific fallbacks, else "EMPTY".
+
+    A key on the command line is readable by every user on the machine for the
+    life of the process, in `ps` and /proc. One leaked that way in full during a
+    live run, so the environment is the supported route for all three commands,
+    and a real key given as --api-key is still honoured but said out loud.
+    `probe` passes PROBE_API_KEY as a fallback, which its wrapper scripts set.
+    """
+    if cli is not None:
+        if cli and cli != "EMPTY":
+            print(f"[WARNING] --api-key puts the key on the command line, where any user "
+                  f"on this machine can read it with ps; export {API_KEY_ENV} instead",
+                  file=sys.stderr)
+        return cli
+    for name in (API_KEY_ENV, *fallback_env):
+        value = os.environ.get(name)
+        if value:
+            return value
+    return "EMPTY"
+
+
 #: Extensions that name a result format, for when --format is not given.
 _FORMAT_BY_EXTENSION = {".json": "json", ".csv": "csv", ".md": "md", ".markdown": "md"}
 
@@ -393,7 +420,9 @@ class BenchmarkConfig(BaseModel):
             "--base-url", type=str, required=True, help="OpenAI compatible endpoint URL"
         )
         parser.add_argument(
-            "--api-key", type=str, default="EMPTY", help="API Key for the endpoint"
+            "--api-key", type=str, default=None,
+            help="API key for the endpoint. Prefer the LLM_ASSAY_API_KEY environment "
+                 "variable: a key given here is visible in ps to every user on the machine"
         )
         parser.add_argument(
             "--model",
@@ -730,6 +759,8 @@ class BenchmarkConfig(BaseModel):
         except ValueError as e:
             print(f"Error: {e}")
             sys.exit(1)
+
+        args.api_key = resolve_api_key(args.api_key)
 
         # Auto-detect model if not specified
         if args.model is None:

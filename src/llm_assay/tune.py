@@ -66,6 +66,9 @@ class Detected:
         self.served_model: Optional[str] = None
         self.hf_model: Optional[str] = None
         self.max_model_len: Optional[int] = None
+        #: True when detection needed an API key. The suggested commands never
+        #: carry it; they read it from the environment, and the output says so.
+        self.uses_key: bool = False
         self.server_version: Optional[str] = None
         self.prefix_caching: Optional[bool] = None
         self.kv_cache_tokens: Optional[int] = None
@@ -756,6 +759,13 @@ def suggestions(found: Detected) -> str:
     lines.append("")
     lines.append(_probe_budget_note(found, args))
     lines.append("")
+    if found.uses_key:
+        lines.append(
+            "  These commands carry no API key: they read it from LLM_ASSAY_API_KEY,\n"
+            "  so export it in the shell that runs them. Do not add --api-key -\n"
+            "  a key on the command line is visible in ps to every user on the machine."
+        )
+        lines.append("")
     lines.append(
         "  --seed $RANDOM is deliberate: a fixed seed sends byte-identical prompts, so a\n"
         "  repeat invocation is served from the prefix cache and prefill numbers inflate.\n"
@@ -892,6 +902,11 @@ def render_script(found: Detected) -> str:
         "",
         'TAG="${TAG:-${preset}-$(date +%Y%m%d-%H%M%S)}"',
         'mkdir -p "$OUTDIR"',
+        *(['# This endpoint needed an API key. It is read from the environment, never',
+           '# written here or passed on a command line.',
+           'if [[ -z "${LLM_ASSAY_API_KEY:-}" ]]; then',
+           '  echo "warning: LLM_ASSAY_API_KEY is not set; this endpoint needed a key" >&2',
+           'fi'] if found.uses_key else []),
         'RESULT="$OUTDIR/${TAG}.json"',
         "",
         'case "$preset" in',
@@ -961,7 +976,10 @@ def main() -> int:
         description="Detect what an endpoint is and suggest benchmark runs that fit it.",
     )
     ap.add_argument("base_url", help="OpenAI-compatible endpoint URL, including /v1")
-    ap.add_argument("--api-key", default="EMPTY", help="API key for the endpoint")
+    ap.add_argument("--api-key", default=None,
+                    help="API key for the endpoint. Prefer the LLM_ASSAY_API_KEY "
+                         "environment variable, which the suggested commands also "
+                         "read: a key given here is visible in ps")
     ap.add_argument(
         "--model",
         default=None,
@@ -983,7 +1001,13 @@ def main() -> int:
     )
     args = ap.parse_args()
 
+    from .config import API_KEY_ENV, resolve_api_key
+    args.api_key = resolve_api_key(args.api_key)
     found = detect(args.base_url, args.api_key, args.model)
+    # The suggestions never carry the key; they read it from the environment,
+    # as every subcommand does. Saying so is what keeps someone from pasting it
+    # back onto the command line when the first suggested run fails with a 401.
+    found.uses_key = args.api_key not in ("", "EMPTY")
     nothing_found = found.served_model is None and found.max_model_len is None
 
     if args.as_json:

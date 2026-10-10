@@ -322,7 +322,11 @@ Within a single run the probability of accidental cache hits is small, so you ra
 ### Arguments
 
 -   `--base-url`: OpenAI compatible endpoint URL (Required).
--   `--api-key`: API Key (Default: "EMPTY").
+-   `--api-key`: API key (Default: the `LLM_ASSAY_API_KEY` environment variable,
+    else "EMPTY"). Prefer the variable: a key on the command line is visible in
+    `ps` to every user on the machine, and an explicit `--api-key` prints a
+    warning saying so. `tune` and `probe` read the same variable, so one
+    `export LLM_ASSAY_API_KEY=...` covers all three.
 -   `--model`: Model name to use for benchmarking. If not specified, attempts to auto-detect from the endpoint's `/models` endpoint.
 -   `--served-model-name`: Model name used in API calls (Defaults to --model if not specified). Tries to autodetect from the endpoint's `/models` endpoint (if supported, e.g. vLLM).
 -   `--tokenizer`: HuggingFace tokenizer name or local path (Defaults to model name).

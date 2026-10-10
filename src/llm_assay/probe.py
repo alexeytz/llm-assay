@@ -2080,10 +2080,10 @@ def main() -> int:
     # against a hosted endpoint showed the full key in a process listing, which
     # is worse than a shell history because every user on the box can read it
     # without trying. PROBE_API_KEY is how a wrapper script should supply it.
-    ap.add_argument("--api-key", default=os.environ.get("PROBE_API_KEY", "EMPTY"),
-                    help="API key for the endpoint. Prefer the PROBE_API_KEY "
-                         "environment variable: a key given here is visible in "
-                         "`ps` to every user on the machine")
+    ap.add_argument("--api-key", default=None,
+                    help="API key for the endpoint. Prefer the LLM_ASSAY_API_KEY "
+                         "environment variable (PROBE_API_KEY also works): a key "
+                         "given here is visible in `ps` to every user on the machine")
     ap.add_argument("--endpoint", choices=("chat", "completions"), default="chat")
     # Defaults are applied after parsing, so that --corpus-dir can tell a value
     # the user chose from one argparse filled in.
@@ -2189,6 +2189,8 @@ def main() -> int:
                          "that never saw the injection from one that saw it and "
                          "judged it consistent; the trace can")
     args = ap.parse_args()
+    from .config import resolve_api_key
+    args.api_key = resolve_api_key(args.api_key, "PROBE_API_KEY")
 
     from .haystacks import Archive, CorpusError, build as build_corpus
     corpus = None

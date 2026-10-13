@@ -30,7 +30,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
+import time
 import re
 import stat
 import sys
@@ -42,7 +44,8 @@ from . import __version__
 # The engine-name families live there, and are imported rather than restated:
 # servermetrics had already been taught llama.cpp when tune had not, and two
 # copies of a list like that is exactly how the stale one goes unnoticed.
-from .servermetrics import _BUILD_FIELDS, _build_summary
+from .servermetrics import _BUILD_FIELDS, _build_summary, strata_as_prometheus
+from .servermetrics import _GAUGES as _SM_GAUGES
 from .servermetrics import _COUNTERS as _SM_COUNTERS
 
 # Room left for the prompt, the generated tokens and the chat template on top of
@@ -69,6 +72,21 @@ class Detected:
         #: True when detection needed an API key. The suggested commands never
         #: carry it; they read it from the environment, and the output says so.
         self.uses_key: bool = False
+        #: A router's declared output cap for its default provider, which binds
+        #: the probe budget before the context window does (GLM 5.3's: 131,072).
+        self.completion_cap: Optional[int] = None
+        #: Per-token prices in dollars, when the endpoint publishes them.
+        self.prompt_price: Optional[float] = None
+        self.completion_price: Optional[float] = None
+        #: Whether the model's tokenizer could be loaded. False on most hosted
+        #: models, whose vocabularies are not public: depths are then counted
+        #: in a stand-in vocabulary, and only --calibrate-depth fixes them.
+        self.tokenizer_ok: Optional[bool] = None
+        # A base model whose tokenizer loaded when the served name's did not:
+        # derived from the GGUF file name, and used only once it has loaded.
+        self.tokenizer: Optional[str] = None
+        #: Decode rate from one short timed request, for the time estimate.
+        self.decode_tps: Optional[float] = None
         self.server_version: Optional[str] = None
         self.prefix_caching: Optional[bool] = None
         self.kv_cache_tokens: Optional[int] = None
@@ -155,6 +173,19 @@ def _build_from_props(props: Dict[str, Any]) -> Optional[Dict[str, str]]:
     return build or None
 
 
+def _recognised(metrics_text: str) -> bool:
+    """Whether the text comes from an engine family this tool knows.
+
+    By family, not by metric: a vLLM without spec-decode counters really has
+    none configured, which is the "absent means not configured" rule below. It
+    is a format we cannot read at all whose silence proves nothing.
+    """
+    known = {name for names in _SM_COUNTERS.values() for name in names}
+    known |= {name for names in _SM_GAUGES.values() for name in names}
+    families = {name.split(":", 1)[0] + ":" for name in known}
+    return any(line.strip().startswith(tuple(families)) for line in metrics_text.splitlines())
+
+
 def _any_counter(metrics_text: str, logical: str) -> Optional[float]:
     """First counter present for a logical value, across every engine spelling.
 
@@ -238,6 +269,78 @@ def _as_int(value: Optional[str]) -> Optional[int]:
         return None
 
 
+def _as_price(value: Any) -> Optional[float]:
+    """A router's per-token price string ("0.0000003") as dollars, or None."""
+    try:
+        price = float(value)
+    except (TypeError, ValueError):
+        return None
+    return price if price > 0 else None
+
+
+def _tokenizer_loads(name: str) -> bool:
+    """Whether the model's own tokenizer can be loaded, without the gpt2 fallback."""
+    try:
+        from .corpus import LightweightTokenizer
+        LightweightTokenizer.from_pretrained(name)
+        return True
+    except Exception:
+        return False
+
+
+_QUANT_SUFFIX = re.compile(
+    r"[-.](?:UD-)?(?:I?Q\d[\w]*|F16|BF16|F32|MXFP4\w*|NVFP4\w*)$", re.IGNORECASE)
+_SHARD = re.compile(r"-\d{5}-of-\d{5}$")
+
+
+def _base_from_gguf(model_path: str) -> Optional[str]:
+    """The base model a GGUF file name spells, as an org/name guess.
+
+    `Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf` -> `Qwen/Qwen3.8-Flash-Next`.
+    The org is the name's leading letters, which is right for Qwen and wrong for
+    plenty of others -- so this is only a candidate, and the caller keeps it only
+    if its tokenizer actually loads.
+    """
+    name = model_path.replace("\\", "/").rsplit("/", 1)[-1]
+    if not name.lower().endswith(".gguf"):
+        return None
+    stem = _SHARD.sub("", name[:-5])
+    stem = _QUANT_SUFFIX.sub("", stem)
+    org = re.match(r"[A-Za-z]+", stem)
+    return f"{org.group(0)}/{stem}" if org and stem else None
+
+
+def _substitute_tokenizer(build: Optional[Dict[str, str]]) -> Optional[str]:
+    """A loadable base-model tokenizer for a served name that is not a repo."""
+    path = (build or {}).get("model_path")
+    candidate = _base_from_gguf(path) if path else None
+    if candidate and _tokenizer_loads(candidate):
+        return candidate
+    return None
+
+
+def _measure_decode(base_url: str, model: str, api_key: str) -> Optional[float]:
+    """Tokens per second from one short request, or None if it gave no count.
+
+    The time estimate needs the endpoint's real decode rate, not a guess. One
+    64-token request is enough to order-of-magnitude it; prefill of a
+    one-line prompt is negligible beside it.
+    """
+    body = {"model": model, "max_tokens": 64,
+            "messages": [{"role": "user", "content": "Count from one to fifty."}]}
+    try:
+        start = time.monotonic()
+        resp = requests.post(base_url.rstrip("/") + "/chat/completions", json=body,
+                             headers=_headers(api_key), timeout=60)
+        elapsed = time.monotonic() - start
+        tokens = (resp.json().get("usage") or {}).get("completion_tokens")
+    except Exception:
+        return None
+    if not isinstance(tokens, int) or tokens < 8 or elapsed <= 0:
+        return None
+    return tokens / elapsed
+
+
 def detect(base_url: str, api_key: str = "EMPTY", model: Optional[str] = None) -> Detected:
     """Interrogate an endpoint. Never raises for a server that answers partially."""
     found = Detected(base_url)
@@ -266,7 +369,13 @@ def detect(base_url: str, api_key: str = "EMPTY", model: Optional[str] = None) -
         if chosen:
             found.served_model = chosen.get("id")
             found.hf_model = chosen.get("root") or chosen.get("id")
-            found.max_model_len = _as_int(chosen.get("max_model_len"))
+            found.max_model_len = (_as_int(chosen.get("max_model_len"))
+                                   or _as_int(chosen.get("context_length")))
+            top = chosen.get("top_provider") if isinstance(chosen.get("top_provider"), dict) else {}
+            found.completion_cap = _as_int(top.get("max_completion_tokens"))
+            pricing = chosen.get("pricing") if isinstance(chosen.get("pricing"), dict) else {}
+            found.prompt_price = _as_price(pricing.get("prompt"))
+            found.completion_price = _as_price(pricing.get("completion"))
             if len(entries) > 1:
                 others = ", ".join(str(e.get("id")) for e in entries[1:])
                 found.notes.append(f"endpoint serves more than one model; also available: {others}")
@@ -288,6 +397,13 @@ def detect(base_url: str, api_key: str = "EMPTY", model: Optional[str] = None) -
         found.thinking_controls = probe_thinking_controls(
             base_url, found.served_model, api_key
         )
+        found.decode_tps = _measure_decode(base_url, found.served_model, api_key)
+    if found.hf_model:
+        found.tokenizer_ok = _tokenizer_loads(found.hf_model)
+        if found.tokenizer_ok is False:
+            found.tokenizer = _substitute_tokenizer(found.served_build)
+            if found.tokenizer:
+                found.tokenizer_ok = True
 
     version = _get(f"{root}/version", api_key, timeout=4.0)
     if version is not None:
@@ -304,13 +420,28 @@ def detect(base_url: str, api_key: str = "EMPTY", model: Optional[str] = None) -
         )
         return found
 
-    labels = _parse_cache_config(metrics.text)
+    text = metrics.text
+    strata = strata_as_prometheus(text)
+    if strata is not None:
+        text = strata
+    if not _recognised(text):
+        # Readable, and in a shape this tool does not read. Every conclusion
+        # below is drawn from the absence of a counter, and absence in a format
+        # we cannot parse proves nothing: Strata's JSON once read as "spec
+        # decode not active" on a box accepting 21 of 25 drafts.
+        found.notes.append(
+            f"{root}/metrics answers, but in a format this tool does not read, so "
+            "prefix caching and speculative decoding are unknown rather than off"
+        )
+        return found
+
+    labels = _parse_cache_config(text)
     if not labels:
         # Readable metrics that simply do not carry vLLM's config block. Saying
         # "/metrics unreadable" there blames the wrong thing and sends the
         # reader to check a URL that is answering fine -- and llama.cpp does
         # publish the prefix-cache evidence, just not the flag.
-        found.prefix_caching = _prefix_caching_from_evidence(metrics.text, found)
+        found.prefix_caching = _prefix_caching_from_evidence(text, found)
     if labels:
         flag = labels.get("enable_prefix_caching")
         if flag is not None:
@@ -330,9 +461,20 @@ def detect(base_url: str, api_key: str = "EMPTY", model: Optional[str] = None) -
     # Absent means not configured; present-but-zero means unknown, not "off" --
     # reporting "off" there would talk a user out of the adaptive sampling their
     # decode numbers are about to need.
-    drafts = _any_counter(metrics.text, "spec_drafts")
-    accepted = _any_counter(metrics.text, "spec_accepted")
-    if drafts is None:
+    drafts = _any_counter(text, "spec_drafts")
+    accepted = _any_counter(text, "spec_accepted")
+    # Strata counts draft *tokens* and no rounds, so it proves drafting is
+    # live without giving an acceptance length.
+    draft_tokens = _any_counter(text, "spec_draft_tokens")
+    if drafts is None and draft_tokens:
+        found.spec_decode = True
+    elif drafts is None and draft_tokens is not None:
+        found.spec_decode = None
+        found.notes.append(
+            "speculative decoding is instrumented but no recent request drafted, "
+            "so whether it is active is unknown"
+        )
+    elif drafts is None:
         found.spec_decode = False
     elif drafts > 0:
         found.spec_decode = True
@@ -569,14 +711,21 @@ def cache_guidance(found: Detected) -> str:
     )
 
 
-def _target_args(found: Detected) -> List[str]:
-    """The flags that identify the endpoint, shared by every suggested run."""
-    args = ["--base-url", found.base_url]
+def _model_args(found: Detected) -> List[str]:
+    """--model, the alias, and a substitute tokenizer when one was verified."""
+    args: List[str] = []
     if found.hf_model:
         args += ["--model", found.hf_model]
     if found.served_model and found.served_model != found.hf_model:
         args += ["--served-model-name", found.served_model]
+    if found.tokenizer:
+        args += ["--tokenizer", found.tokenizer]
     return args
+
+
+def _target_args(found: Detected) -> List[str]:
+    """The flags that identify the endpoint, shared by every suggested run."""
+    return ["--base-url", found.base_url, *_model_args(found)]
 
 
 def build_presets(found: Detected) -> List[Tuple[str, str, List[str]]]:
@@ -686,8 +835,37 @@ def probe_preset(found: Detected) -> Tuple[str, str, List[str]]:
         "does the model still USE the context, at the depths above",
         ["--depths", *[str(d) for d in ladder], "--rungs", "clean", "outlier",
          "log", "--trials", "10", "--thinking", "on",
-         "--max-tokens", str(probe_budget(found, max(ladder)))],
+         "--max-tokens", str(probe_budget(found, max(ladder))),
+         # A model whose vocabulary cannot be loaded is sized in a stand-in
+         # one, so every depth would be nominal; calibration measures the
+         # endpoint's own count instead.
+         *(["--calibrate-depth"] if found.tokenizer_ok is False else []),
+         *(["--max-spend", str(probe_spend_cap(found, ladder))]
+           if found.prompt_price else [])],
     )
+
+
+#: Trials the probe preset runs per (depth, rung), and its rungs.
+_PROBE_TRIALS = 10
+_PROBE_RUNGS = 3
+
+
+def probe_prompt_cost(found: Detected, ladder: List[int]) -> float:
+    """Dollars the preset's prompt tokens cost alone, from the published price."""
+    from .probe import PROMPT_OVERHEAD
+    tokens = sum(d + PROMPT_OVERHEAD for d in ladder) * _PROBE_TRIALS * _PROBE_RUNGS
+    return tokens * (found.prompt_price or 0.0)
+
+
+def probe_spend_cap(found: Detected, ladder: List[int]) -> int:
+    """A suggested --max-spend: three times the prompt cost, in whole dollars.
+
+    Not an estimate of the bill. The prompt side is knowable; the reasoning a
+    model produces is not -- 856 to 179,847 tokens were measured on identical
+    input -- so the cap is a stop between trials, sized from the part that is
+    known, and the output says so.
+    """
+    return max(1, math.ceil(3 * probe_prompt_cost(found, ladder)))
 
 
 #: Share of the room left at the deepest probe depth that the suggested budget
@@ -699,16 +877,51 @@ _PROBE_BUDGET_SHARE = 0.75
 _PROBE_BUDGET_UNKNOWN = 40000
 
 
+def _probe_notes(found: Detected, args: List[str]) -> List[str]:
+    """Calibration, spend and time notes for the suggested probe, when they apply."""
+    notes = []
+    ladder = [int(d) for d in args[args.index("--depths") + 1: args.index("--rungs")]]
+    trials = len(ladder) * _PROBE_TRIALS * _PROBE_RUNGS
+    if "--calibrate-depth" in args:
+        notes.append(
+            f"  --calibrate-depth because {found.hf_model}'s tokenizer could not be\n"
+            "  loaded: without it every depth would be counted in a stand-in vocabulary\n"
+            "  and the endpoint would see a different amount of text than the label says.")
+    if "--max-spend" in args:
+        cap = args[args.index("--max-spend") + 1]
+        notes.append(
+            f"  --max-spend {cap}: the prompt tokens alone cost about "
+            f"${probe_prompt_cost(found, ladder):.2f} at the\n"
+            "  published price. Reasoning output is the unknown part, and usually the\n"
+            "  larger; the cap stops the run between trials. Set your own.")
+    if found.decode_tps:
+        per_10k = trials * 10000 / found.decode_tps / 3600
+        notes.append(
+            f"  Time: decode measured at {found.decode_tps:.0f} t/s, so every 10,000 tokens a\n"
+            f"  trial reasons adds about {per_10k:.1f} h across the preset's {trials} trials.\n"
+            "  Reasoning models used 10,000-200,000 per trial at depth in this tool's\n"
+            "  own studies; a non-reasoning model answers in a few hundred.")
+    return notes
+
+
 def _probe_budget_note(found: Detected, args: List[str]) -> str:
     """What the suggested probe budget means for how long it takes."""
     budget = args[args.index("--max-tokens") + 1]
-    if found.max_model_len is None:
+    if found.max_model_len is None and not found.completion_cap:
         return ("  --max-tokens " + budget + " because the window is unknown. A reasoning\n"
                 "  model at depth can need far more; trials that hit it finish `length`,\n"
                 "  and the probe notes them. Raise it once you know the window.")
-    return ("  --max-tokens " + budget + " is three quarters of what the window leaves at\n"
-            "  the deepest depth. Truncated trials are the hard ones, so the budget is\n"
-            "  kept large; a reasoning model can spend tens of minutes on one deep trial.")
+    deepest = max(int(d) for d in args[args.index("--depths") + 1: args.index("--rungs")])
+    from .probe import PROMPT_OVERHEAD
+    room = (found.max_model_len - deepest - PROMPT_OVERHEAD
+            if found.max_model_len is not None else None)
+    if found.completion_cap and (room is None or found.completion_cap <= room):
+        basis = f"the router's declared {found.completion_cap:,}-token output cap"
+    else:
+        basis = "what the window leaves at the deepest depth"
+    return ("  --max-tokens " + budget + " is three quarters of\n  " + basis + ".\n"
+            "  Truncated trials are the hard ones, so the budget is kept large; a\n"
+            "  reasoning model can spend tens of minutes on one deep trial.")
 
 
 def probe_budget(found: Detected, deepest: int) -> int:
@@ -720,21 +933,23 @@ def probe_budget(found: Detected, deepest: int) -> int:
     window instead: three quarters of what is left at the deepest depth after
     the prompt overhead, rounded down to a thousand.
     """
-    if found.max_model_len is None:
-        return _PROBE_BUDGET_UNKNOWN
     from .probe import PROMPT_OVERHEAD
-    room = found.max_model_len - deepest - PROMPT_OVERHEAD
-    budget = int(room * _PROBE_BUDGET_SHARE) // 1000 * 1000
+    ceilings = []
+    if found.max_model_len is not None:
+        ceilings.append(found.max_model_len - deepest - PROMPT_OVERHEAD)
+    # A router's declared output cap binds too, and on hosted models usually
+    # first: the probe refuses a budget above it and warns at 80% of it.
+    if found.completion_cap:
+        ceilings.append(found.completion_cap)
+    if not ceilings:
+        return _PROBE_BUDGET_UNKNOWN
+    budget = int(min(ceilings) * _PROBE_BUDGET_SHARE) // 1000 * 1000
     return max(1000, budget)
 
 
 def _probe_command(found: Detected, args: List[str],
                    runner: str = "uv run llm-assay.py") -> List[str]:
-    target = ["probe", found.base_url]
-    if found.hf_model:
-        target += ["--model", found.hf_model]
-    if found.served_model and found.served_model != found.hf_model:
-        target += ["--served-model-name", found.served_model]
+    target = ["probe", found.base_url, *_model_args(found)]
     tokens = runner.split() + [_quote(a) for a in [*target, *args]]
     tokens += ["--seed", "$RANDOM"]
     return _wrap(tokens, "  ")
@@ -759,6 +974,22 @@ def suggestions(found: Detected) -> str:
     lines.append("")
     lines.append(_probe_budget_note(found, args))
     lines.append("")
+    for note in _probe_notes(found, args):
+        lines.append(note)
+        lines.append("")
+    if found.tokenizer:
+        lines.append(
+            f"  --tokenizer {found.tokenizer} because the served name is not a model\n"
+            "  repository. It was read off the GGUF file name and kept because its\n"
+            "  tokenizer loads; check it is the base model. Without it every shape is\n"
+            "  counted with gpt2, and a `pp512` row sent 451-499 tokens on one engine.")
+        lines.append("")
+    elif found.tokenizer_ok is False:
+        lines.append(
+            f"  {found.hf_model} is not a model repository with a tokenizer, so the\n"
+            "  benchmark will count shapes with gpt2 (a `pp512` row sent 451-499 tokens\n"
+            "  on one engine). Add --tokenizer <base model repo> to the runs above.")
+        lines.append("")
     if found.uses_key:
         lines.append(
             "  These commands carry no API key: they read it from LLM_ASSAY_API_KEY,\n"
@@ -799,11 +1030,7 @@ def as_dict(found: Detected) -> Dict[str, Any]:
         })
 
     key, description, args = probe_preset(found)
-    probe_argv = ["probe", found.base_url]
-    if found.hf_model:
-        probe_argv += ["--model", found.hf_model]
-    if found.served_model and found.served_model != found.hf_model:
-        probe_argv += ["--served-model-name", found.served_model]
+    probe_argv = ["probe", found.base_url, *_model_args(found)]
     probe_argv += args
     probe = {
         "key": key,
@@ -921,11 +1148,7 @@ def render_script(found: Detected) -> str:
         out += [f"  {key})", *body, "    ;;"]
 
     pkey, _, pargs = probe_preset(found)
-    ptarget = ["probe", found.base_url]
-    if found.hf_model:
-        ptarget += ["--model", found.hf_model]
-    if found.served_model and found.served_model != found.hf_model:
-        ptarget += ["--served-model-name", found.served_model]
+    ptarget = ["probe", found.base_url, *_model_args(found)]
     pbody = _wrap([_quote(a) for a in [*ptarget, *pargs]], "          ")
     pbody[0] = "    args=(" + pbody[0].lstrip()
     pbody[-1] = pbody[-1] + ")"

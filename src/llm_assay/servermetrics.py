@@ -30,9 +30,10 @@ never as a difference.
 
 from __future__ import annotations
 
+import json
 import os
 import re
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import aiohttp
 from pydantic import BaseModel, Field
@@ -43,15 +44,21 @@ from pydantic import BaseModel, Field
 _MAX_TRANSIENT_FAILURES = 3
 
 _COUNTERS = {
-    "prefix_queries": ("vllm:prefix_cache_queries_total", "vllm:gpu_prefix_cache_queries_total"),
+    "prefix_queries": (
+        "vllm:prefix_cache_queries_total",
+        "vllm:gpu_prefix_cache_queries_total",
+        "strata:prompt_tokens_total",
+    ),
     "prefix_hits": (
         "vllm:prefix_cache_hits_total",
         "vllm:gpu_prefix_cache_hits_total",
         "llamacpp:prompt_tokens_cached_total",
+        "strata:reused_tokens_total",
     ),
     "spec_accepted": (
         "vllm:spec_decode_num_accepted_tokens_total",
         "llamacpp:spec_decode_num_accepted_tokens_total",
+        "strata:drafts_accepted_total",
     ),
     "spec_drafts": (
         "vllm:spec_decode_num_drafts_total",
@@ -60,13 +67,14 @@ _COUNTERS = {
     "spec_draft_tokens": (
         "vllm:spec_decode_num_draft_tokens_total",
         "llamacpp:spec_decode_num_draft_tokens_total",
+        "strata:drafts_offered_total",
     ),
     # Not a metric anyone asked for -- it is how we find out whether the numbers
     # above describe this run at all. Every counter here is server-global, so a
     # second client on the endpoint lands inside our window silently.
     # llama.cpp publishes no completed-request counter, so this stays None
     # there and the concurrent-traffic check falls back to its gauge tell alone.
-    "requests_finished": ("vllm:request_success_total",),
+    "requests_finished": ("vllm:request_success_total", "strata:requests_total"),
 }
 
 # Logical values an engine publishes in pieces rather than whole. llama.cpp
@@ -99,8 +107,61 @@ _GAUGES = {
     # logical names above. This one answers "was anyone else mid-request when we
     # started?", which the completed-request counter cannot: a stream that spans
     # our whole window never increments it.
-    "requests_running": ("vllm:num_requests_running", "llamacpp:requests_processing"),
+    "requests_running": (
+        "vllm:num_requests_running",
+        "llamacpp:requests_processing",
+        "strata:requests_active",
+    ),
 }
+
+
+# Strata (github.com/Niko1221/Strata) answers /metrics with JSON, not Prometheus
+# text. Its `totals` block is cumulative since server start -- requests, prompt
+# tokens, reused (prompt tokens served from cache, included in prompt_tokens: a
+# 53-token prompt sent twice logged 0 then 48 reused), drafts offered and
+# accepted -- so it is mapped onto counter names and everything downstream (the
+# diff, the per-phase accumulator, both prefix-cache warnings) reads it
+# unchanged. Drafts are counted in tokens, not rounds: acceptance *rate* is
+# available and acceptance *length* is not, so spec_drafts stays None rather
+# than guessed. The `requests` list beside it holds only the last 12 and is not
+# used.
+_STRATA_TOTALS = (
+    ("strata:requests_total", "requests"),
+    ("strata:prompt_tokens_total", "prompt_tokens"),
+    ("strata:reused_tokens_total", "reused"),
+    ("strata:drafts_offered_total", "drafts_offered"),
+    ("strata:drafts_accepted_total", "drafts_accepted"),
+)
+
+
+def strata_counters(text: str) -> Optional[ServerCounters]:
+    """Strata's JSON metrics as counters, or None if this is not Strata."""
+    if not text.lstrip().startswith("{"):
+        return None
+    try:
+        doc = json.loads(text)
+    except ValueError:
+        return None
+    if not isinstance(doc, dict) or not isinstance(doc.get("totals"), dict) \
+            or not isinstance(doc.get("engine"), dict):
+        return None
+    totals = doc["totals"]
+    raw = {name: float(totals[field]) for name, field in _STRATA_TOTALS
+           if isinstance(totals.get(field), (int, float))}
+    live: Dict[str, Any] = doc["live"] if isinstance(doc.get("live"), dict) else {}
+    running = float(live.get("state") not in (None, "idle")) + float(live.get("queued") or 0)
+    return ServerCounters(raw=raw, gauges={"strata:requests_active": running},
+                          prefixes=["strata"])
+
+
+def strata_as_prometheus(text: str) -> Optional[str]:
+    """Strata's JSON rendered as the exposition lines tune's readers expect."""
+    counters = strata_counters(text)
+    if counters is None:
+        return None
+    lines = [f"{name} {value}" for name, value in {**counters.raw, **counters.gauges}.items()]
+    return "\n".join(lines) + "\n"
+
 
 _SAMPLE = re.compile(r"^(?P<name>[a-zA-Z_:][a-zA-Z0-9_:]*)(?:\{[^}]*\})?\s+(?P<value>[-+0-9.eEnaN]+)$")
 
@@ -457,7 +518,8 @@ class ServerMetricsProbe:
                 if resp.status != 200:
                     self.available = False
                     return None
-                counters = _parse(await resp.text())
+                text = await resp.text()
+                counters = strata_counters(text) or _parse(text)
                 self._transient_failures = 0
         except Exception:
             # Give up only after this keeps happening: the two warnings that

@@ -134,6 +134,7 @@ class BenchmarkMetadata(BaseModel):
     no_cache: Optional[bool] = Field(None, description="Requests were made unique to defeat prefix caching")
     cold: Optional[bool] = Field(None, description="Corpus offsets were salted per invocation, so the prefix cache was cold")
     cold_salt: Optional[str] = Field(None, description="The per-invocation salt; two runs with different salts saw different text and cannot be paired")
+    ppt_basis: Optional[str] = Field(None, description="What est_ppt and prefill t/s are timed to: 'first_token' (the first generated token). Absent in results saved before 2026-10-13, which timed to the first response chunk")
     adapt_prompt: Optional[bool] = Field(None, description="Prompt size corrected for chat-template overhead")
     skip_coherence: Optional[bool] = Field(None, description="Coherence check was skipped")
     num_runs: Optional[int] = Field(None, description="Measured runs per shape requested")
@@ -524,7 +525,13 @@ class BenchmarkResults:
             if res.first_token_ts:
                 first_token_times.append(res.first_token_ts)
                 e2e_ttft = res.first_token_ts - res.start_ts
-                est_ppt = max(0, ttfr - latency)
+                # From the first *generated* token, not the first chunk. An
+                # engine may stream an empty or role-only chunk the moment a
+                # request arrives, before any prefill: Strata does, and timing
+                # from that chunk reported 67,880 t/s prefill against the 100-108
+                # its own log recorded. Where the first chunk carries the first
+                # token, as on vLLM and llama.cpp, the two are the same instant.
+                est_ppt = max(0, e2e_ttft - latency)
 
                 agg_e2e_ttft_values.append(e2e_ttft)
                 agg_est_ppt_values.append(est_ppt)

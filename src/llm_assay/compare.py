@@ -287,6 +287,10 @@ _COMPARABILITY: Tuple[Tuple[str, str], ...] = (
     # comparable if the GGUF behind it did.
     ("served_build", "server build"),
     ("latency_mode", "latency mode"),
+    # Prefill timed to the first chunk or the first generated token. Identical
+    # on engines that send them together, wildly different on one that streams
+    # an empty chunk before prefill.
+    ("ppt_basis", "prefill timing basis"),
     ("endpoint", "--endpoint"),
     ("exact_tg", "--exact-tg"),
     ("no_cache", "--no-cache"),

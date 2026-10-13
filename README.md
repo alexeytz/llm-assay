@@ -144,9 +144,9 @@ its new name, `--measure-cached-followup`), and none was removed. What changed:
   and `--legend`.
 
 **Knowing what the server actually did.**
-- Reads the server's Prometheus `/metrics` (vLLM, llama.cpp, SGLang) for
-  prefix-cache hit rate and speculative-decode acceptance, per shape, and per
-  phase in the cached-follow-up mode.
+- Reads the server's `/metrics` (vLLM, llama.cpp and SGLang in Prometheus text,
+  Strata in JSON) for prefix-cache hit rate and speculative-decode acceptance,
+  per shape, and per phase in the cached-follow-up mode.
 - Warns when a cached-follow-up measurement got no cache hits, when an ordinary
   run was served from a cache an earlier run filled (the trap where the same
   command run twice reports a large "improvement" against itself), and when
@@ -412,9 +412,9 @@ The script outputs a table with the following metrics. All time measurements are
 The script attempts to estimate network or processing latency to provide "server-side" processing times.
 - **Latency**: Measured based on `--latency-mode`.
   - `api`: Time to fetch `/models` (from sending request to getting first byte of the response). Eliminates network latency only.
-  - `generation`: Time to generate 1 token (from sending request to getting first byte of the response). Tries to eliminate network and server overhead latency. By default this sends 4 single-token streaming probes, discards the first as a request-shape warmup, and averages the remaining 3. `--warmup-runs` controls the number of discarded generation-latency probes.
+  - `generation`: Time to generate 1 token (from sending the request to receiving the first stream chunk that carries a token). Tries to eliminate network and server overhead latency. By default this sends 4 single-token streaming probes, discards the first as a request-shape warmup, and averages the remaining 3. `--warmup-runs` controls the number of discarded generation-latency probes.
   - `none`: Assumed to be 0.
-- This measured latency is subtracted from `ttfr` to calculate `est_ppt`.
+- This measured latency is subtracted from the time to the first generated token (`e2e_ttft`) to calculate `est_ppt`.
 
 #### Table Columns
 
@@ -433,7 +433,7 @@ The script attempts to estimate network or processing latency to provide "server
 
 -   **`ttfr (ms)` (Time To First Response)**:
     -   Calculation: `Time of First Response Chunk - Start Time`.
-    -   Represents the raw time until the client receives *any* stream data from the server (including empty chunks or role definitions, but excluding initial http response header). This includes network latency. The same measurement method is used by `vllm bench serve` to report TTFT.
+    -   Represents the raw time until the client receives *any* stream data from the server (including empty chunks or role definitions, but excluding initial http response header). This includes network latency. The same measurement method is used by `vllm bench serve` to report TTFT. Reported as measured, but no longer used to derive prefill speed: a `ttfr` far below `e2e_ttft` means the engine streamed before it started processing.
 
 -   Each metric carries its own `values` list, and **the lists can differ in length**,
     for two separate reasons.
@@ -452,8 +452,9 @@ The script attempts to estimate network or processing latency to provide "server
     Each mean is valid over its own list; only the zipping is unsafe.
 
 -   **`est_ppt (ms)` (Estimated Prompt Processing Time)**:
-    -   Calculation: `TTFR - Estimated Latency`.
+    -   Calculation: `Time to First Generated Token - Estimated Latency`.
     -   Estimated time the server spent processing the prompt. Used for calculating Prompt Processing speed.
+    -   Timed to the first chunk carrying a token (content or reasoning), not to the first chunk of any kind. Some engines stream an empty or role-only chunk the moment a request arrives, before any prefill; timed from that chunk, one engine's ~4.4 s prefill read as 67,880 t/s against the 100-108 t/s its own log recorded. On engines that send the first token in the first chunk, as vLLM and llama.cpp do, the two are the same instant. Saved results record this as `ppt_basis: "first_token"`; results saved before 2026-10-13 have no `ppt_basis` and were timed to the first chunk, and `compare` warns when two files state different bases.
 
 -   **`e2e_ttft (ms)` (End-to-End Time To First Token)**:
     -   Calculation: `Time of First Content Token - Start Time`.
@@ -644,7 +645,8 @@ Where the numbers come from, and why they matter:
 | `build` | llama.cpp's `/props` (`model_path`, `model_ftype`, `build_info`) | Names the weights behind a pinned alias, which `/v1/models` cannot |
 | `max ctx` | `/v1/models` `max_model_len`; else llama.cpp's `/props` slot `n_ctx`, else `meta.n_ctx_train` | Every suggested depth fits under it, with room for prompt and generation |
 | `prefix cache` | `vllm:cache_config_info` label; else cached-token counters | `--measure-cached-followup` is only suggested when the server can actually honour it |
-| `spec decode` | `vllm:spec_decode_*` / `llamacpp:spec_decode_*` counters | Decode presets switch to `--target-ci` sampling instead of a fixed `--runs` |
+| `spec decode` | `vllm:spec_decode_*` / `llamacpp:spec_decode_*` counters; Strata's draft totals | Decode presets switch to `--target-ci` sampling instead of a fixed `--runs` |
+| tokenizer | the served name; else the base model a GGUF file name spells, if its tokenizer loads | Adds `--tokenizer` when the served name is an alias rather than a repository, so shapes are counted in the model's own vocabulary |
 | `kv cache` | `kv_cache_size_tokens` | Concurrency levels are capped at what fits, so no request sits queued |
 | thinking switches | `/v1/chat/completions/render` | Which of `reasoning_effort=none`, `enable_thinking=false` and the graded levels actually change the prompt |
 
@@ -678,7 +680,16 @@ caching is both enabled and working - which is what you need before trusting
 `--measure-cached-followup`. A counter reading zero is reported as **unknown,
 not off**, because it is cumulative and a freshly restarted server has simply
 not been hit yet. An engine publishing neither says so, and says it without
-blaming the URL.
+blaming the URL. A `/metrics` in a format `tune` cannot read at all leaves both
+prefix caching and speculative decoding **unknown**: absence in a format it cannot
+parse proves nothing, and it once reported "spec decode not active" on a Strata
+box accepting 21 of 25 drafts.
+
+Strata reuses a prefix only when the shared part is at least about 2,048
+tokens: measured, a 1,929-token shared prefix reused nothing and 2,103 reused all
+of it. A `--measure-cached-followup` row at `--depth 2048` therefore measures a
+full re-prefill there, and the 0%-hits warning says so; from 4,096 up the
+follow-up is served from cache.
 
 To settle it by hand on any engine: send one prompt twice and diff the
 cached-token counters. The benchmark already does exactly that per shape, which
@@ -687,6 +698,13 @@ is what both prefix-cache warnings are built on.
 Detection is best-effort. A server with no readable `/metrics` still gets
 suggestions - built from conservative defaults and labelled as such - rather than
 an error.
+
+The suggested `probe` run is sized to the endpoint too: all three rungs, a
+`--max-tokens` from the context window (and from a router's declared output cap,
+when there is one), `--calibrate-depth` when the model's tokenizer cannot be
+loaded, and `--max-spend` when the endpoint publishes a price. `tune` also times
+one short request and says how much wall-clock time each 10,000 reasoning tokens
+adds across the preset - on a reasoning model, a full probe can take days.
 
 ### Machine-readable detection
 
@@ -1360,7 +1378,7 @@ source is still present here.
 
 Added since the fork: seeded and paired corpus sampling; `compare`, for
 paired/Welch significance testing between saved runs; `servermetrics`, which
-scrapes prefix-cache and speculative-decode counters from vLLM and llama.cpp;
+scrapes prefix-cache and speculative-decode counters from vLLM, llama.cpp and Strata;
 `tune`, for endpoint detection and run suggestion; `probe`, the long-context
 quality probe; Student-t confidence intervals and adaptive sampling; corpus
 fingerprinting; `--cold`, `--thinking` and `--reasoning-effort`; and an

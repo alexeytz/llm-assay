@@ -259,6 +259,7 @@ class BenchmarkRunner:
             no_cache=cfg.no_cache,
             cold=cfg.cold or None,
             cold_salt=self.run_salt,
+            ppt_basis="first_token",
             adapt_prompt=cfg.adapt_prompt,
             skip_coherence=cfg.skip_coherence,
             num_runs=cfg.num_runs,
@@ -686,22 +687,28 @@ class BenchmarkRunner:
                                         rate_delta = self.server_deltas.get(
                                             shape_key + ("inf",), delta
                                         )
+                                        # Whatever the engine supplies: Strata counts draft
+                                        # tokens, not rounds, so it has a rate and no length.
+                                        parts = []
                                         if delta.spec_acceptance_length is not None:
-                                            print(
-                                                f"  server: spec acceptance length "
-                                                f"{delta.spec_acceptance_length:.2f}"
-                                                + (
-                                                    f", prefix cache hit rate "
-                                                    f"{rate_delta.prefix_cache_hit_rate:.1%}"
-                                            + {"shape": "",
-                                               "shape (context load)": " (context load)",
-                                               "shape (follow-up)": " (follow-up turn)",
-                                               "shape (both phases)": " (ctx load + follow-up)"}.get(
-                                                   rate_delta.scope, " (server lifetime)")
-                                                    if rate_delta.prefix_cache_hit_rate is not None
-                                                    else ""
-                                                )
-                                            )
+                                            parts.append(
+                                                f"spec acceptance length "
+                                                f"{delta.spec_acceptance_length:.2f}")
+                                        elif delta.spec_acceptance_rate is not None:
+                                            parts.append(
+                                                f"spec acceptance rate "
+                                                f"{delta.spec_acceptance_rate:.1%}")
+                                        if rate_delta.prefix_cache_hit_rate is not None:
+                                            parts.append(
+                                                f"prefix cache hit rate "
+                                                f"{rate_delta.prefix_cache_hit_rate:.1%}"
+                                                + {"shape": "",
+                                                   "shape (context load)": " (context load)",
+                                                   "shape (follow-up)": " (follow-up turn)",
+                                                   "shape (both phases)": " (ctx load + follow-up)"}.get(
+                                                       rate_delta.scope, " (server lifetime)"))
+                                        if parts:
+                                            print("  server: " + ", ".join(parts))
                                         warning = cached_followup_warning(
                                             delta, self.config.enable_prefix_caching, depth
                                         )

@@ -49,6 +49,23 @@ def _answer_text(choice: Dict[str, Any]) -> Tuple[str, str]:
     return content, reasoning
 
 
+def _carries_token(line: bytes) -> bool:
+    """Whether one SSE line is a chunk with generated text in it."""
+    text = line.decode("utf-8", "replace").strip()
+    if not text.startswith("data:") or text.endswith("[DONE]"):
+        return False
+    try:
+        chunk = json.loads(text[5:].strip())
+    except ValueError:
+        return False
+    for choice in chunk.get("choices") or []:
+        delta = choice.get("delta") or {}
+        if (delta.get("content") or delta.get("reasoning_content")
+                or delta.get("reasoning") or choice.get("text")):
+            return True
+    return False
+
+
 class LLMClient:
     def __init__(
         self,
@@ -276,14 +293,20 @@ class LLMClient:
                         async for _ in response.content:
                             pass
                 elif mode == "generation":
+                    # To the first chunk that carries a token, not the first
+                    # byte: est_ppt is now timed to the first generated token,
+                    # and an engine that streams an empty chunk before prefill
+                    # (Strata) made the first-byte figure 4 ms against a real
+                    # several hundred.
                     payload = {**self._probe_payload("hello", 1), "stream": True}
                     async with session.post(self._url, json=payload, headers=self.headers) as response:
-                        async for _ in response.content:
-                            elapsed = time.perf_counter() - start
-                            if not is_warmup:
-                                latencies.append(elapsed)
-                            break
-                        async for _ in response.content: pass
+                        seen = False
+                        async for line in response.content:
+                            if not seen and _carries_token(line):
+                                seen = True
+                                elapsed = time.perf_counter() - start
+                                if not is_warmup:
+                                    latencies.append(elapsed)
             except Exception as e:
                 print(f"Error measuring latency: {e}")
         

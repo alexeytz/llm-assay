@@ -7,6 +7,10 @@ produce results like them. It is a selection, not a history: the programme ran
 33 pre-registered arms, and each use case below shows one of them, with the
 others that used the same method named in a line.
 
+Host names (`vllm-host1`, `llamacpp-host1`) and serving aliases (`VLLM-HOST1`)
+are placeholders; `runner X` and `prereg vN` name the script and the
+pre-registration an example came from, which are not published.
+
 ---
 
 ## The building blocks

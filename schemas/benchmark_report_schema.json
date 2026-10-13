@@ -665,6 +665,19 @@
       "description": "The per-invocation salt; two runs with different salts saw different text and cannot be paired",
       "title": "Cold Salt"
     },
+    "ppt_basis": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "What est_ppt and prefill t/s are timed to: 'first_token' (the first generated token). Absent in results saved before 2026-10-13, which timed to the first response chunk",
+      "title": "Ppt Basis"
+    },
     "adapt_prompt": {
       "anyOf": [
         {

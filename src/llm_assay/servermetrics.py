@@ -75,6 +75,10 @@ _COUNTERS = {
     # llama.cpp publishes no completed-request counter, so this stays None
     # there and the concurrent-traffic check falls back to its gauge tell alone.
     "requests_finished": ("vllm:request_success_total", "strata:requests_total"),
+    # Also about the run rather than the model: a preempted request lost its KV
+    # and waited. At 8 agent workers on one box that turned Flash-Next's
+    # `overnight` into 16 timeouts in 20.
+    "preemptions": ("vllm:num_preemptions_total",),
 }
 
 # Logical values an engine publishes in pieces rather than whole. llama.cpp
@@ -459,6 +463,143 @@ async def server_build(
         if isinstance(body.get(field), (str, int, float)) and str(body[field])
     }
     return build or None
+
+
+#: vLLM's CacheConfig labels worth keeping: the ones a deployment chooses and
+#: that change what the model computes or how much fits, not bookkeeping.
+_VLLM_SETTINGS = ("cache_dtype", "kv_cache_size_tokens", "enable_prefix_caching",
+                  "block_size", "gpu_memory_utilization", "mamba_ssm_cache_dtype")
+
+#: llama.cpp's default sampling, from /props. It applies to every request that
+#: does not set its own, which is every request a harness sends without them.
+_LLAMACPP_SAMPLING = ("temperature", "top_k", "top_p", "min_p", "repeat_penalty",
+                      "presence_penalty")
+
+
+async def _get_text(session: aiohttp.ClientSession, url: str, api_key: str) -> Optional[str]:
+    try:
+        async with session.get(url, headers=_auth_headers(api_key),
+                               timeout=aiohttp.ClientTimeout(total=10)) as response:
+            return await response.text() if response.status == 200 else None
+    except Exception:
+        return None
+
+
+async def server_settings(
+    session: aiohttp.ClientSession, base_url: str, api_key: str = "EMPTY",
+) -> Dict[str, Any]:
+    """How the endpoint is configured, as far as it says so itself.
+
+    Weights and engine version are not the whole deployment: the KV-cache dtype
+    and the tensor-parallel split each change next-token choices with nothing
+    else altered, and one deployment here served every agent arm at fp8 KV
+    without any result saying so. vLLM states its cache config as labels on
+    ``vllm:cache_config_info``; llama.cpp states its context, slots and default
+    sampling on ``/props`` and ``/slots``. Neither publishes the TP size, the
+    weight quantisation or the GPU, so those are the operator's to declare.
+
+    A slot whose context equals the server's is drawing on one pool shared by
+    every slot (``kv_pool_shared``), which is the condition under which one
+    looping request fails all the others. Best-effort: ``{}`` is unknown.
+    """
+    out: Dict[str, Any] = {}
+    metrics = await _get_text(session, _metrics_url(base_url), api_key)
+    if metrics:
+        for line in metrics.splitlines():
+            if line.startswith("vllm:cache_config_info"):
+                labels = dict(re.findall(r'(\w+)="([^"]*)"', line))
+                out.update({k: labels[k] for k in _VLLM_SETTINGS if k in labels})
+                break
+    props_text = await _get_text(session, _props_url(base_url), api_key)
+    try:
+        props = json.loads(props_text) if props_text else None
+    except ValueError:
+        props = None
+    if isinstance(props, dict):
+        gen = props.get("default_generation_settings") or {}
+        n_ctx, slots = gen.get("n_ctx"), props.get("total_slots")
+        if isinstance(n_ctx, int):
+            out["n_ctx"] = n_ctx
+        if isinstance(slots, int):
+            out["total_slots"] = slots
+        params = gen.get("params") or {}
+        sampling = {k: params[k] for k in _LLAMACPP_SAMPLING if isinstance(params.get(k), (int, float))}
+        if sampling:
+            out["default_sampling"] = sampling
+        slots_text = await _get_text(session, _props_url(base_url)[: -len("props")] + "slots",
+                                     api_key)
+        try:
+            slot_list = json.loads(slots_text) if slots_text else None
+        except ValueError:
+            slot_list = None
+        if isinstance(slot_list, list) and slot_list and isinstance(n_ctx, int):
+            slot_ctx = slot_list[0].get("n_ctx") if isinstance(slot_list[0], dict) else None
+            if isinstance(slot_ctx, int):
+                out["slot_n_ctx"] = slot_ctx
+                out["kv_pool_shared"] = len(slot_list) > 1 and slot_ctx == n_ctx
+    return out
+
+
+def kv_pool_warning(settings: Dict[str, Any], workers: int, context_window: int) -> Optional[str]:
+    """When one run's loop could fail its neighbours: the pool cannot hold them all.
+
+    Each run's context is bounded by ``context_window``, so ``workers`` of them
+    fit a shared pool only when ``workers x context_window`` does. Measured on
+    llama.cpp with Gemma: a looping turn filled the 81,920-token pool and every
+    request in flight failed "Context size has been exceeded" at the same second.
+    """
+    pool = settings.get("n_ctx")
+    if not settings.get("kv_pool_shared") or not isinstance(pool, int) or workers < 2:
+        return None
+    if workers * context_window <= pool:
+        return None
+    fits = max(1, pool // context_window)
+    return (f"{workers} workers share one {pool:,}-token KV pool at a {context_window:,}-token "
+            f"context window each: one run that fills its window fails the others' requests. "
+            f"Use --workers {fits}, or --context-window {pool // workers:,}.")
+
+
+#: What an endpoint says it is, in the order a drift note names them.
+IDENTITY_FIELDS = ("served_model", "served_build", "engine_version")
+
+
+async def endpoint_identity(
+    session: aiohttp.ClientSession, base_url: str, api_key: str = "EMPTY",
+    requested: Optional[str] = None,
+) -> Dict[str, Any]:
+    """The endpoint's account of itself: weights, build and engine.
+
+    Read twice -- before the first measurement and after the last -- so a run
+    can say whether one set of weights produced all of it. Each field is as
+    best-effort as the function behind it, and None is unknown.
+    """
+    return {
+        "served_model": await served_model(session, base_url, api_key, requested),
+        "served_build": await server_build(session, base_url, api_key),
+        "engine_version": await engine_version(session, base_url, api_key),
+    }
+
+
+def identity_drift(before: Dict[str, Any], after: Dict[str, Any]) -> List[str]:
+    """Each identity field that changed between two reads, as a sentence.
+
+    A reload mid-run is invisible in the numbers: the alias answers throughout,
+    every request succeeds, and the result records whichever weights were
+    loaded when it *started*. Two reads are the only way a run can say it
+    measured one thing. A field that either read could not see is skipped --
+    unknown, never different -- so an endpoint that publishes nothing never
+    voids a run, and one that stops answering ``/props`` at the end does not
+    either.
+    """
+    notes: List[str] = []
+    for field in IDENTITY_FIELDS:
+        was, now = before.get(field), after.get(field)
+        if was is None or now is None or was == now:
+            continue
+        if isinstance(was, dict) and isinstance(now, dict):
+            was, now = _build_summary(was), _build_summary(now)
+        notes.append(f"{field} changed during the run: {was} -> {now}")
+    return notes
 
 
 def _parse(text: str) -> ServerCounters:

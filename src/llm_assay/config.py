@@ -408,6 +408,8 @@ class BenchmarkConfig(BaseModel):
                 "  tune <url>              detect an endpoint and suggest runs sized to it\n"
                 "  compare a.json b.json   paired/Welch significance testing between saved runs\n"
                 "  probe <url> --model M   quality probe: can the model still USE the context?\n"
+                "  agent <url> --model M   an installed harness (Pi) works a trap; grade the files\n"
+                "  divergence capture ...  next-token KL between two servings, on agent prefixes\n"
                 "\n"
                 "Each takes its own --help, e.g. llm-assay.py probe --help\n"
             ),

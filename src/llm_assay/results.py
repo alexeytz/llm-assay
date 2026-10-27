@@ -115,6 +115,18 @@ class BenchmarkMetadata(BaseModel):
             "model_ftype, build_info); null if it published none"
         ),
     )
+    # The two reads of the endpoint's identity, compared: before the first
+    # shape and after the last. A non-empty list means the weights or the build
+    # changed underneath the run, so its numbers belong to no one model -- the
+    # result is void and the CLI exits 4. [] means checked and unchanged; None
+    # means unchecked (an interrupted run, or a file written before this).
+    identity_drift: Optional[List[str]] = Field(
+        None,
+        description=(
+            "Identity fields that changed between the reads before the first "
+            "shape and after the last; [] if none, null if unchecked"
+        ),
+    )
     tokenizer: Optional[str] = Field(None, description="Tokenizer override, if any")
     # "" rather than None when nothing fell back, for the same reason
     # extra_body uses {}: None is reserved for "written by a version that did
@@ -948,7 +960,7 @@ class BenchmarkResults:
             "est_ppt (ms)",
             "Of that wait, how much the server spent actually reading the "
             "prompt -- the network trip taken out. Lower is better.",
-            f"ttfr minus {subtracted}. It is the denominator of every prefill "
+            f"e2e_ttft minus {subtracted}. It is the denominator of every prefill "
             f"t/s above, so a bad latency estimate moves those too.",
         ))
         entries.append((

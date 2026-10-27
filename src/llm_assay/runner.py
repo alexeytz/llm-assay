@@ -21,6 +21,8 @@ from .servermetrics import (
     ServerMetricsProbe,
     cached_followup_warning,
     concurrent_traffic_warning,
+    endpoint_identity,
+    identity_drift,
     served_model,
     server_build,
     stale_prefix_cache_warning,
@@ -84,6 +86,10 @@ class BenchmarkRunner:
         # None if the endpoint publishes nothing.
         self.served_model: Optional[str] = None
         self.served_build: Optional[Dict[str, str]] = None
+        # What changed between that read and one after the last shape. None
+        # until the second read happens, so an interrupted run records
+        # "unchecked" rather than a clean bill.
+        self.identity_drift: Optional[List[str]] = None
 
         # We need to track deltas from warmup to adapt prompts
         self.run_salt: Optional[str] = None
@@ -251,6 +257,7 @@ class BenchmarkRunner:
             served_model_name=cfg.served_model_name,
             served_model=self.served_model,
             served_build=self.served_build,
+            identity_drift=self.identity_drift,
             tokenizer=cfg.tokenizer,
             tokenizer_fallback=self._tokenizer_fallback(),
             book_url=cfg.book_url,
@@ -709,8 +716,12 @@ class BenchmarkRunner:
                                                        rate_delta.scope, " (server lifetime)"))
                                         if parts:
                                             print("  server: " + ", ".join(parts))
+                                        # The follow-up's own rate, as printed above: fed
+                                        # the blended delta, a follow-up just over the
+                                        # threshold read under it, and only the "both
+                                        # phases" wording could ever print.
                                         warning = cached_followup_warning(
-                                            delta, self.config.enable_prefix_caching, depth
+                                            rate_delta, self.config.enable_prefix_caching, depth
                                         )
                                         if warning:
                                             print("  " + warning)
@@ -736,6 +747,20 @@ class BenchmarkRunner:
                                         # context, so the expected token count is
                                         # the sum of both.
                                         self.results.add(self.config.model, pp, tg, depth, concurrency, run_std_results, latency, expected_pp + expected_ctx, is_context_phase=False, save_total_throughput_timeseries=self.config.save_total_throughput_timeseries, save_all_throughput_timeseries=self.config.save_all_throughput_timeseries, reasoning_effort=effort, thinking=thinking, server_metrics=self.server_deltas.get(shape_key), corpus_fingerprint=corpus_digest.hexdigest())
+
+                # Read again after the last shape. A reload mid-suite leaves the
+                # alias answering and every request succeeding, so the numbers
+                # cannot show it; only two reads of the server's own account can.
+                before = {"served_model": self.served_model,
+                          "served_build": self.served_build}
+                after = await endpoint_identity(
+                    session, self.config.base_url, self.config.api_key,
+                    self.config.served_model_name or self.config.model,
+                )
+                after.pop("engine_version")  # not read before; nothing to compare
+                self.identity_drift = identity_drift(before, after)
+                for note in self.identity_drift:
+                    print(f"\n[VOID] {note}")
 
                 self.results.metadata = self._metadata(
                     latency,

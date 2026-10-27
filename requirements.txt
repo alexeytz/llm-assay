@@ -20,3 +20,4 @@ numpy
 requests
 aiohttp
 pydantic>=2.12.5
+pyyaml

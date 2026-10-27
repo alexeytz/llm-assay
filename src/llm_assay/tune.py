@@ -415,8 +415,8 @@ def detect(base_url: str, api_key: str = "EMPTY", model: Optional[str] = None) -
     metrics = _get(f"{root}/metrics", api_key)
     if metrics is None:
         found.notes.append(
-            f"no readable {root}/metrics -- prefix-caching status and KV capacity are unknown, "
-            "so the suggestions below are conservative"
+            f"no readable {root}/metrics -- prefix-caching status, speculative decoding and KV "
+            "capacity are unknown, so the suggestions below are conservative"
         )
         return found
 
@@ -649,7 +649,9 @@ def report(found: Detected) -> str:
     elif found.spec_decode is False:
         row("spec decode", "not active")
     else:
-        row("spec decode", "configured, no traffic yet -- acceptance unknown")
+        # None is also an endpoint whose /metrics did not answer, not only a draft
+        # head with no traffic yet; each path that knows which leaves a note.
+        row("spec decode", "unknown -- see note below")
 
     if found.kv_cache_tokens:
         detail = f"{_fmt_int(found.kv_cache_tokens)} tokens"

@@ -130,6 +130,17 @@ async def main_async() -> int:
         )
         return 1
 
+    # Measured, and not attributable: the endpoint's identity changed between
+    # the first shape and the last. Exit 4, as `probe` does, so a wrapper
+    # reruns the suite instead of keeping it.
+    drift = runner.identity_drift
+    if drift:
+        print(
+            "error: the result is void -- " + "; ".join(drift),
+            file=sys.stderr,
+        )
+        return 4
+
     summary = runner.results.failure_summary()
     if summary:
         print("\n" + summary)

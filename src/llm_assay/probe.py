@@ -55,8 +55,8 @@ from .client import LLMClient, _answer_text
 from .config import BenchmarkConfig
 from .corpus import load_tokenizer, tokenizer_fallback as _tokenizer_fallback
 from .servermetrics import (
-    ServerCounters, ServerMetricsProbe, _build_summary, engine_version,
-    served_model, server_build,
+    ServerCounters, ServerMetricsProbe, _build_summary, endpoint_identity,
+    engine_version, identity_drift, served_model, server_build,
 )
 
 # Written in the register of the surrounding prose on purpose. An injection that
@@ -241,14 +241,52 @@ class ProbeError(RuntimeError):
 
     def __init__(self, message: str, reasoning: str = "",
                  finish_reason: Optional[str] = None,
-                 usage: Optional[Dict[str, Any]] = None):
+                 usage: Optional[Dict[str, Any]] = None,
+                 reached_model: bool = False):
         super().__init__(message)
         self.reasoning = reasoning
         self.finish_reason = finish_reason
+        # Set only where a reply arrived and the *model* failed to finish it.
+        # Everything else -- a status code, a dropped stream, a body with no
+        # choices -- is the endpoint's, and `failure_kind` voids it.
+        self.reached_model = reached_model
         # What the endpoint billed for the attempt. A truncated trial spent its
         # whole budget, and that is exactly the trial whose cost and length a
         # reader wants.
         self.usage = usage
+
+
+#: The two ways a trial can fail, and the rule between them.
+FAILURE_KINDS = ("unanswered", "void")
+
+
+def failure_kind(exc: BaseException) -> str:
+    """``unanswered`` when the model failed to answer, ``void`` otherwise.
+
+    The distinction decides what a failed trial means. An *unanswered* trial is
+    a real outcome -- the model ran out of budget, or stopped without an answer
+    -- and it is counted: the unanswered rate is reported per cell, and past 20%
+    it says the accuracy is measured on survivors. A *void* trial never reached
+    the model, measures nothing, and counts on neither side: it is reported
+    apart and rerun.
+
+    The default is void. An endpoint's failure modes are open-ended and a
+    model's are not -- exactly two raises in `_ask` mean a reply arrived and
+    was not an answer -- so anything not recognisably the model's is voided.
+    The opposite default, which `scripts/probe-cell.sh` used to apply by
+    matching error text, banked what its transport list missed, and it missed
+    three: an HTTP 404 from addressing the model by repository instead of the
+    serving alias (23 trials in v25), a 200 with no `choices` (2 in v29), and a
+    402 from a router out of credits -- each recorded as the model declining to
+    answer, inflating the rate that excludes a cell. A router's
+    ``finish_reason='error'`` is the endpoint's too, although it arrives phrased
+    as an incomplete answer: measured against OpenRouter, a d32,768 trial ran
+    641 s, produced 31,303 reasoning tokens and then returned it.
+
+    ``length`` is deliberately the model's. Truncation at --max-tokens is a
+    budget the operator chose, and every pre-registration reads it.
+    """
+    return "unanswered" if getattr(exc, "reached_model", False) else "void"
 
 
 def usage_of(body: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -963,7 +1001,8 @@ async def _ask(
     if finish != "stop":
         detail = ("truncated at --max-tokens; raise it" if finish == "length"
                   else f"finish_reason={finish!r}, not 'stop'")
-        raise ProbeError(f"incomplete answer: {detail}", reasoning, finish, usage)
+        raise ProbeError(f"incomplete answer: {detail}", reasoning, finish, usage,
+                         reached_model=finish != "error")
     # A reply with no content is the model's scratchpad, not its answer.
     #
     # This used to fall back to the reasoning trace, on the grounds that a
@@ -981,7 +1020,7 @@ async def _ask(
     # answers, which is the failure that can be acted on.
     if not content.strip():
         raise ProbeError("no answer content; the reply was reasoning only",
-                         reasoning, finish, usage)
+                         reasoning, finish, usage, reached_model=True)
     provider = body.get("provider")
     return content, reasoning, finish, (str(provider) if provider else None)
 
@@ -1555,6 +1594,10 @@ async def run(
                 # strings and transcripts.
                 truncated = 0
                 attempted = 0
+                # Trials that never reached the model (`failure_kind`). Run,
+                # but not trials: they leave `trials` below and count on
+                # neither side of the unanswered rate.
+                voided = 0
                 # `cited` format only: trials whose lines 2-3 offered any log
                 # line, offered one the log lacks, and actually showed an
                 # impossibility.
@@ -1606,6 +1649,9 @@ async def run(
                         if len(errors) < 3 and str(exc) not in errors:
                             errors.append(str(exc))
                         completed += 1
+                        kind = failure_kind(exc)
+                        if kind == "void":
+                            voided += 1
                         # A cell can run for hours; a trial that fails printed
                         # nothing before this, so a run watched live looked
                         # like it had skipped a trial number with no
@@ -1614,7 +1660,11 @@ async def run(
                         # label, and only one of them tracks depth. Naming the
                         # loop at the trial keeps it out of a depth curve it
                         # does not belong to.
-                        if looks_degenerate(getattr(exc, "reasoning", "")):
+                        if kind == "void":
+                            print(f"    trial {completed}/{trials}: VOID  "
+                                  f"(the endpoint, not the model: {str(exc)[:150]})",
+                                  file=sys.stderr, flush=True)
+                        elif looks_degenerate(getattr(exc, "reasoning", "")):
                             looped += 1
                             print(f"    trial {completed}/{trials}: UNANSWERED  "
                                   f"(degenerate loop -- the trace repeats; a bigger "
@@ -1640,7 +1690,9 @@ async def run(
                         if transcripts is not None:
                             transcripts.append({
                                 "depth": depth, "rung": rung, "position": position,
-                                "expected": expected, "verdict": "UNANSWERED",
+                                "expected": expected,
+                                "verdict": "VOID" if kind == "void" else "UNANSWERED",
+                                "outcome": kind,
                                 "error": str(exc),
                                 "started_at": t_started.isoformat(),
                                 "duration_s": round(t_elapsed, 3),
@@ -1764,9 +1816,14 @@ async def run(
                     # a sweep cannot publish a position without also publishing
                     # how much distance changed underneath it.
                     "separation": round(hi_frac - lo_frac, 3) if rung == "log" else None,
-                    # Trials actually run. Equal to the requested count unless
-                    # the spend cap stopped the cell short.
-                    "trials": attempted, "answered": answered, "errors": errors,
+                    # Trials that reached the model. Equal to the requested
+                    # count unless the spend cap stopped the cell short or a
+                    # trial was void; `void` counts those, which were run and
+                    # measured nothing. Excluding them here is what keeps
+                    # `trials - answered` the unanswered count everywhere it
+                    # is read, pooled files included.
+                    "trials": attempted - voided, "void": voided,
+                    "answered": answered, "errors": errors,
                     "mentioned_while_reasoning": seen,
                     "traced": traced,
                     # Only the control rung has a false positive to classify;
@@ -1795,9 +1852,12 @@ async def run(
                 # runs long and hits the token ceiling. Dropping those biases
                 # accuracy *upward*, so a high rate has to be said out loud
                 # rather than left as a quiet column.
-                lost = attempted - answered
+                measured = attempted - voided
+                lost = measured - answered
                 note = "" if not lost else f"  [{lost} unanswered]"
-                if lost and attempted and lost / attempted >= 0.2:
+                if voided:
+                    note += f"  [{voided} void: the endpoint failed; rerun]"
+                if lost and measured and lost / measured >= 0.2:
                     # Name the fix that fits the failure. "raise --max-tokens"
                     # is right for truncation and useless for a reply that
                     # stopped cleanly without answering -- and advice that does
@@ -1813,6 +1873,22 @@ async def run(
                       f"95% CI [{lo:.2f}, {hi:.2f}]{saw}{note}", flush=True)
                 for err in errors:
                     print(f"      error: {err}", file=sys.stderr)
+
+        # Asked again after the last trial. A reload between two trials leaves
+        # every request succeeding and the alias answering throughout, so the
+        # only way the file can say one set of weights produced all of it is
+        # to have looked at both ends.
+        identity_after = await endpoint_identity(
+            session, client.base_url, api_key, model)
+    void = identity_drift(
+        {"served_model": served, "served_build": build, "engine_version": engine},
+        identity_after)
+    void_trials = sum(r["void"] for r in results)
+    if void_trials and not any(r["trials"] for r in results):
+        void.append(f"no trial reached the model: {void_trials} endpoint "
+                    f"failure(s), see the errors")
+    for reason in void:
+        print(f"  VOID: {reason}", file=sys.stderr, flush=True)
     return {
         "version": __version__, "model": model, "served_model": served,
         "engine_version": engine,
@@ -1822,6 +1898,14 @@ async def run(
         # means the endpoint published none of it; absent, in a file written
         # before this field existed, means unknown.
         "served_build": build,
+        # The same three facts read after the last trial. A field that changed
+        # between the two reads voids the run.
+        "identity_after": identity_after,
+        # Why this result measures nothing attributable -- the identity moved,
+        # or no trial reached the model -- or [] when nothing did. A void
+        # result is rerun, never pooled: `probe` exits 4 on it. Absent, in an
+        # older file, means unchecked.
+        "void": void,
         "base_url": base_url,
         "seed": seed, "thinking": thinking, "trials": trials,
         # The output budget. Never recorded before, although every void rule
@@ -1975,6 +2059,12 @@ def render(report: Dict[str, Any]) -> str:
     if report.get("served_build"):
         lines.append(f"build: {_build_summary(report['served_build'])}")
     lines.append("")
+    # Above the table, because the table under it looks like any other. A void
+    # result is not a weak measurement; it is not attributable to one model.
+    for reason in report.get("void") or []:
+        lines.append(f"VOID: {reason} -- not a measurement; rerun")
+    if report.get("void"):
+        lines.append("")
     if report.get("tokenizer_fallback"):
         # Printed on the console table too, not just stderr scrollback -- a
         # table that looks complete is exactly what got this bug missed the
@@ -2014,6 +2104,11 @@ def render(report: Dict[str, Any]) -> str:
                         f"providers ({', '.join(providers)}): the pin did not "
                         "hold, and the cells may mix precisions")
     warnings += report.get("budget_warnings") or []
+    for r in report["results"]:
+        if r.get("void"):
+            warnings.append(f"d{r['depth']} {r['rung']}: {r['void']} trial(s) "
+                            "void -- the endpoint failed, not the model; not "
+                            "counted in any column above, so rerun them")
     if report.get("halted"):
         warnings.append(f"run halted early -- {report['halted']}; later cells "
                         "were not run")
@@ -2299,6 +2394,12 @@ def main() -> int:
     # zero. Reporting 0/N for every rung -- including the trivial retrieval
     # floor -- reads exactly like a collapsed model, so it must not exit 0.
     answered = sum(r["answered"] for r in report["results"])
+    if report.get("void"):
+        # Exit 4, distinct from 1 and 3: the run completed and its result is
+        # not attributable, so a wrapper reruns it and never banks it.
+        print("error: the result is void -- " + "; ".join(report["void"]),
+              file=sys.stderr)
+        return 4
     if not answered:
         print("error: no probe request was answered; the results above measure "
               "nothing. Check --model names a model the endpoint serves.",

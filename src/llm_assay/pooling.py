@@ -49,6 +49,10 @@ class PooledCells:
         #: a header printing that name alone reads as though it did.
         self.identified: Dict[str, int] = {"served": 0, "build": 0, "effort": 0}
         self.sources: int = 0
+        #: Files skipped because the probe marked them void: the endpoint's
+        #: identity moved during the run, or no trial reached the model. Not
+        #: in `sources`, and nothing of theirs is in any cell.
+        self.voided: int = 0
         #: Effort levels the pooled files recorded. A file that recorded none
         #: -- older, or run at the vendor default -- is counted apart in
         #: `identified["effort"]`, never as a level of its own.
@@ -111,6 +115,9 @@ def pool(targets: Iterable[str]) -> PooledCells:
         for path in result_files(target):
             with open(path) as fh:
                 report = json.load(fh)
+            if report.get("void"):
+                pooled.voided += 1
+                continue
             pooled.sources += 1
             _absorb_provenance(pooled, report)
             for r in report.get("results", []):
@@ -375,6 +382,8 @@ def _trials_by_seed(target: str, rung: str) -> Tuple[Dict[Tuple[int, int], Dict[
     for path in result_files(target):
         with open(path) as fh:
             report = json.load(fh)
+        if report.get("void"):
+            continue
         seed = report.get("seed")
         for r in report.get("results", []):
             if r.get("rung") != rung:

@@ -58,19 +58,20 @@ configures concurrency > 1.
 |------------------|---------|------------------------------------------------------------------------|
 | `request_id`     | integer | Stable per-request identifier (monotonically increasing per process).  |
 | `model`          | string  | Model name as configured (e.g. `meta-llama/Llama-3.1-8B-Instruct`).    |
-| `base_url`       | string  | Endpoint URL the request is being sent to.                             |
+| `base_url`       | string  | Configured `--base-url`; the request is POSTed to `<base_url>/chat/completions` (or `/completions` under `--endpoint completions`). |
 | `prompt_size`    | integer | User-facing `--pp` for this request (the value the user typed). The actual number of tokens sent to the server may differ slightly when llm-assay's `--adapt-prompt` is on; see `prompt_tokens` on `request_end`. |
 | `response_size`  | integer | User-facing `--tg` for this request.                                   |
 | `context_size`   | integer | User-facing `--depth` for this request.                                |
 | `concurrency`    | integer | Concurrency level for this batch.                                      |
-| `run_index`      | integer | Zero-based run index within the current `(depth, pp, tg, concurrency)` cell. It resets per concurrency level, so a consumer keying without concurrency double-counts. |
-| `phase`          | string  | Which benchmark phase this request belongs to: `ctx` (the cold context load under `--measure-cached-followup`), `inf` (the follow-up turn over that context), or `standard` (not in two-phase mode). Nothing else in the event distinguishes the two phases -- both carry identical sizes, concurrency, `run_index` and `target_label` -- so a consumer cannot otherwise tell a cold ingest from a warm follow-up. |
+| `run_index`      | integer | Zero-based run index within the current `(depth, pp, tg, concurrency)` cell of one `target_label` arm. It resets per concurrency level and per thinking/reasoning-effort arm, so a consumer keying without concurrency or `target_label` double-counts. |
+| `phase`          | string  | Which benchmark phase this request belongs to: `ctx` (the cold context load under `--measure-cached-followup`), `inf` (the follow-up turn over that context), or `standard` (not in two-phase mode, or a `depth 0` shape within it, which has no context to load). Nothing else in the event distinguishes the two phases -- both carry identical sizes, concurrency, `run_index` and `target_label` -- so a consumer cannot otherwise tell a cold ingest from a warm follow-up. |
 | `target_label`   | string  | The swept dimensions this request belongs to, space separated: `think=on`, `re=low`, or both. Empty when neither `--thinking` nor `--reasoning-effort` is sweeping. A consumer grouping requests by configuration needs this; the shape fields above do not distinguish them. |
 
 ### `request_first_response`
 
-Emitted the moment the first response chunk of any kind (even an empty
-role-only chunk) arrives for a given request. Distinct from
+Emitted the moment the first streamed chunk that carries a choice (even an
+empty role-only chunk) arrives for a given request. A usage-only chunk, or
+one with `choices: []`, does not fire it. Distinct from
 `request_first_token` because some servers send an empty header chunk
 before the first content-bearing chunk.
 
@@ -92,12 +93,15 @@ request. This is `e2e_ttft` (end-to-end time to first token).
 ### `latency_measured`
 
 Emitted once after llm-assay completes its network-latency probe.
-Consumers use it to compute `est_ppt = ttfr − latency` (estimated pure
-prompt-processing time, with the network round-trip subtracted).
+Consumers use it to compute `est_ppt = ttft − latency` (estimated pure
+prompt-processing time, with the network round-trip subtracted), clamped at
+zero. Use `ttft_s` from `request_first_token`, not `ttfr_s` from
+`request_first_response`: an engine that streams an empty chunk before
+prefill makes the first-response time meaningless as a prefill time.
 
 | Field        | Type    | Description                                                     |
 |--------------|---------|-----------------------------------------------------------------|
-| `latency_s`  | number  | Measured / assumed network latency (seconds). Zero for `--latency-mode none`. |
+| `latency_s`  | number  | Measured / assumed network latency (seconds). Zero for `--latency-mode none`, and also when every probe in `api`/`generation` mode failed (`mode` still names the configured mode). |
 | `mode`       | string  | `"api"`, `"generation"`, or `"none"`.                           |
 
 ### `tokens`
@@ -108,8 +112,8 @@ between `request_first_token` and `request_end`.
 | Field        | Type    | Description                                            |
 |--------------|---------|--------------------------------------------------------|
 | `request_id` | integer | Matches the request's `request_start`.                 |
-| `count`      | integer | Number of generated tokens in this chunk (≥ 1).        |
-| `snippet`    | string  | Decoded text for this chunk (may be empty).            |
+| `count`      | integer | Number of generated tokens in this chunk. Normally ≥ 1; a chunk with text and an empty `token_ids` list gives 0. |
+| `snippet`    | string  | Decoded text for this chunk. Never empty: a chunk with no text emits no event. |
 | `estimated`  | boolean | Optional. Present and `true` when the server did not return `token_ids` and `count` is a best-effort estimate (one-per-chunk fallback). Absent otherwise. The authoritative total is reported on `request_end`. |
 
 A single `tokens` event may carry multiple tokens when the server streams
@@ -128,7 +132,7 @@ Emitted exactly once per request (including failed ones).
 | `request_id`     | integer | Matches the request's `request_start`.                             |
 | `total_tokens`   | integer | Total generated tokens for this request.                           |
 | `prompt_tokens`  | integer | Server-reported prompt token count (0 if the server didn't say).   |
-| `decode_seconds` | number  | Time from `first_token_ts` to request end (seconds).               |
+| `decode_seconds` | number  | Time from `first_token_ts` to request end (seconds); 0.0 when no first token arrived or the request errored mid-stream. |
 | `error`          | string  | Empty on success, otherwise the error message.                     |
 
 ### `bench_complete`
@@ -200,8 +204,8 @@ A two-token, single-request bench produces:
 
 ```jsonl
 {"schema":"llm-assay-progress.v1","type":"header","ts":1714969500.123,"llm_assay_version":"0.5.0-dev+g1a2b3c4"}
-{"schema":"llm-assay-progress.v1","type":"request_start","ts":1714969500.456,"request_id":0,"model":"meta-llama/Llama-3.1-8B-Instruct","base_url":"http://localhost:8000/v1","prompt_size":2048,"response_size":2,"context_size":0,"concurrency":1,"run_index":0,"target_label":"","phase":"standard"}
 {"schema":"llm-assay-progress.v1","type":"latency_measured","ts":1714969500.200,"latency_s":0.004,"mode":"api"}
+{"schema":"llm-assay-progress.v1","type":"request_start","ts":1714969500.456,"request_id":0,"model":"meta-llama/Llama-3.1-8B-Instruct","base_url":"http://localhost:8000/v1","prompt_size":2048,"response_size":2,"context_size":0,"concurrency":1,"run_index":0,"target_label":"","phase":"standard"}
 {"schema":"llm-assay-progress.v1","type":"request_first_response","ts":1714969500.870,"request_id":0,"ttfr_s":0.414}
 {"schema":"llm-assay-progress.v1","type":"request_first_token","ts":1714969500.890,"request_id":0,"ttft_s":0.434}
 {"schema":"llm-assay-progress.v1","type":"tokens","ts":1714969500.911,"request_id":0,"count":1,"snippet":"Hello"}

@@ -322,6 +322,11 @@ def comparability_warnings(docs: List[Dict[str, Any]], paths: List[str]) -> List
             continue
         shown = ", ".join(f"{_short(p)}={v!r}" for p, v in zip(paths, values))
         notes.append(f"warning: {label} differs between runs ({shown})")
+    # Not a difference between the files but a defect inside one: the endpoint
+    # changed while it ran, so its rows mix two builds.
+    for doc, path in zip(docs, paths):
+        for note in doc.get("identity_drift") or []:
+            notes.append(f"warning: {_short(path)} is void -- {note}")
     return notes
 
 
@@ -740,7 +745,10 @@ def main() -> int:
         prog="llm-assay.py compare",
         description="Statistically compare saved llm-assay JSON results.",
     )
-    ap.add_argument("files", nargs="+", help="JSON result files; the first is the baseline")
+    ap.add_argument("files", nargs="+",
+                    help="JSON result files; the first is the baseline. Agent results compare "
+                         "pass rates per task; FILE#ARM picks one arm of a models file, and a "
+                         "models file alone compares its arms")
     ap.add_argument(
         "--metric",
         default="tg_throughput",
@@ -790,6 +798,13 @@ def main() -> int:
              "turning an A/B report into a deploy gate",
     )
     args = ap.parse_args()
+    from . import agent_compare
+    agents = [agent_compare.is_agent(f) for f in args.files]
+    if any(agents):
+        # Pass rates, not throughputs: a different test, a different table.
+        if not all(agents):
+            ap.error("cannot compare agent results with benchmark results")
+        return agent_compare.main(args.files, args.alpha, args.as_json, args.fail_on_regression)
     if len(args.files) < 2:
         ap.error("need at least two result files to compare")
     try:

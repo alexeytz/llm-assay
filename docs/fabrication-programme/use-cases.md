@@ -548,15 +548,16 @@ BACKOFF_CAP="${PROBE_BACKOFF_CAP:-900}"
 backoff="$BACKOFF_START"
 
 _transport_failure() {
-  # "no" (keep it) only when the saved trial is a measurement: something was
-  # answered, or every recorded error is the model's own non-answer. Anything
-  # else is "yes" -- the endpoint's, or not provably the model's.
+  # "no" (keep it) only when the saved trial is a measurement: the probe wrote
+  # a result and did not mark it void. Anything else is "yes" -- the
+  # endpoint's, or not provably the model's.
   #
-  # Classified on the recorded message rather than on the exception type,
-  # because an HTTP 503 from a server that is still loading arrives as the same
-  # ProbeError as a reply the model did not finish.
+  # The rule itself is the probe's (`failure_kind` in probe.py), applied at the
+  # trial where it knows whether a reply arrived. This used to be a regex over
+  # the recorded error text, kept here and nowhere else, so `probe` run without
+  # this script banked an endpoint failure as an unanswered trial.
   python3 - "$1" <<'PY'
-import json, re, sys
+import json, sys
 
 try:
     with open(sys.argv[1]) as fh:
@@ -566,40 +567,9 @@ except (OSError, ValueError):
     print("yes")
     raise SystemExit
 
-results = report.get("results", [])
-errors = [e for r in results for e in r.get("errors", [])]
-answered = sum(r.get("answered", 0) for r in results)
-transport = re.compile(
-    r"cannot connect|connection reset|connection refused|server disconnected"
-    r"|broken pipe|timeout|timed out|HTTP 5\d\d|HTTP 429|HTTP 408"
-    # A router reports an upstream provider failure as a 200 whose choice
-    # carries finish_reason='error'. Measured against OpenRouter: a d32,768
-    # trial ran 641s, produced 31,303 reasoning tokens, and then returned
-    # finish_reason='error' with no provider named. That is the endpoint
-    # failing, not the model declining to answer -- and without this it banked
-    # as an unanswered trial, inflating the very rate that decides whether a
-    # cell is excluded. `length` is deliberately NOT here: truncation at
-    # --max-tokens is the model hitting the budget and is a real outcome.
-    r"|finish_reason='error'"
-    # 402 is a router out of credits; a truncated transfer is a stream the
-    # connection dropped. Both were banked as the model declining before the
-    # default below was inverted (gpt-6-sol-pro and GLM respectively).
-    r"|HTTP 40[01234]|no choices|payload is not completed", re.I)
-# The default is inverted: a non-answer is kept only when it is recognisably
-# the *model's*. An endpoint's failure modes are open-ended and a model's are
-# not -- probe raises exactly these two for a reply that reached the model --
-# so anything unrecognised is quarantined. The old default banked whatever the
-# transport list missed, and it missed three: an HTTP 404 from addressing the
-# model by repository instead of the serving alias (23 trials in v25), and a
-# 200 with no `choices` (2 in v29), each recorded as the model declining to
-# answer. Quarantine is cheap -- the file survives under interrupted/ and the
-# seed is fixed -- while banking inflates the rate that excludes a cell.
-# `transport` still wins over `model`, because finish_reason='error' arrives
-# phrased as an incomplete answer.
-model = re.compile(r"^incomplete answer: |^no answer content", re.I)
-kept = answered or (errors and all(
-    model.search(e) and not transport.search(e) for e in errors))
-print("no" if kept else "yes")
+# Absent means a probe too old to say, which is not provably the model's.
+void = report.get("void")
+print("no" if void == [] else "yes")
 PY
 }
 
@@ -755,6 +725,11 @@ PY
       done
       if [ "$status" -eq 124 ]; then
         echo "    ^ no result after ${TRIAL_TIMEOUT}s; treating as a hung endpoint"
+      elif [ "$status" -eq 4 ]; then
+        # Void: the endpoint failed the trial, or its identity changed while
+        # the trial ran (see run.log). Either way the answer, if any, belongs
+        # to no one model.
+        echo "    ^ exit 4: the probe voided this trial (see run.log); retrying same seed"
       else
         echo "    ^ exit ${status}: the endpoint did not answer (not the model); retrying same seed"
       fi
@@ -892,6 +867,9 @@ def main():
         print("WARNING: pooled across different reasoning_effort settings: "
               f"{sorted(pooled_all.efforts)}"
               + (" and the vendor default" if pooled_all.identified["effort"] < sources else ""))
+    if pooled_all.voided:
+        print(f"WARNING: skipped {pooled_all.voided} void file(s) -- the probe "
+              "marked them unattributable; rerun those trials")
     print(f"\npooled {sources} file(s)")
     if len(pooled_all.efforts) == 1 and pooled_all.identified["effort"] == sources:
         print(f"reasoning_effort: {next(iter(pooled_all.efforts))}")

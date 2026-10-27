@@ -9,6 +9,7 @@
 #     "requests",
 #     "aiohttp",
 #     "pydantic>=2.12.5",
+#     "pyyaml",
 # ]
 # ///
 #
@@ -26,8 +27,10 @@ This script puts ``src/`` on the import path and hands off to the package.
     python llm-assay.py tune http://localhost:8000/v1
     python llm-assay.py compare baseline.json candidate.json
     python llm-assay.py probe http://localhost:8000/v1 --model my-model
+    python llm-assay.py agent http://localhost:8000/v1 --model my-model
+    python llm-assay.py divergence capture result.json runs/ --base-url URL --model M --save ref.json
 
-``tune``, ``compare`` and ``probe`` are exposed as subcommands so the checkout needs exactly
+``tune``, ``compare``, ``probe``, ``agent`` and ``divergence`` are exposed as subcommands so the checkout needs exactly
 one script. Any other first argument is passed through to the benchmark
 unchanged, so every flag documented in the README works here.
 """
@@ -83,7 +86,7 @@ def main() -> int:
     # Prepend so this checkout always wins over any stray copy on the path.
     sys.path.insert(0, SRC)
 
-    if len(sys.argv) > 1 and sys.argv[1] in ("compare", "tune", "probe"):
+    if len(sys.argv) > 1 and sys.argv[1] in ("compare", "tune", "probe", "agent", "divergence"):
         name = sys.argv[1]
         module = _import_or_explain(name)
         sys.argv = [f"{sys.argv[0]} {name}", *sys.argv[2:]]

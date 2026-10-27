@@ -561,6 +561,22 @@
       "description": "What the server reported serving (llama.cpp /props: model_path, model_ftype, build_info); null if it published none",
       "title": "Served Build"
     },
+    "identity_drift": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Identity fields that changed between the reads before the first shape and after the last; [] if none, null if unchecked",
+      "title": "Identity Drift"
+    },
     "tokenizer": {
       "anyOf": [
         {

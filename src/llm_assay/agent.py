@@ -971,6 +971,45 @@ def sandbox_selftest(harness: Any, scratch: str, memory: Optional[str]) -> List[
     return problems
 
 
+_USERNS_SYSCTL = "/proc/sys/kernel/apparmor_restrict_unprivileged_userns"
+
+
+def bwrap_diagnosis() -> Optional[str]:
+    """Why bwrap cannot start at all, when that is why the self-test failed.
+
+    The self-test's own lines only say a command did not run. On Ubuntu 23.10
+    and later AppArmor refuses unprivileged user namespaces unless the program
+    has a profile, and bwrap then dies before running anything ("setting up uid
+    map: Permission denied"). Found on a stock Ubuntu 24.04.
+    """
+    try:
+        r = subprocess.run(["bwrap", "--ro-bind", "/", "/", "--unshare-user", "true"],
+                           capture_output=True, text=True, timeout=30,
+                           stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if r.returncode == 0:
+        return None
+    lines = (r.stderr or "").strip().splitlines()
+    out = f"bwrap itself does not start: {lines[-1] if lines else f'exit {r.returncode}'}"
+    try:
+        with open(_USERNS_SYSCTL) as fh:
+            restricted = fh.read().strip() == "1"
+    except OSError:
+        restricted = False
+    if restricted:
+        out += ("\n  AppArmor restricts unprivileged user namespaces here "
+                "(kernel.apparmor_restrict_unprivileged_userns = 1).\n"
+                "  Give bwrap a profile that allows them, e.g. /etc/apparmor.d/bwrap:\n"
+                "      abi <abi/4.0>,\n"
+                "      include <tunables/global>\n"
+                "      profile bwrap /usr/bin/bwrap flags=(unconfined) {\n"
+                "        userns,\n"
+                "      }\n"
+                "  then: sudo apparmor_parser -r /etc/apparmor.d/bwrap")
+    return out
+
+
 def _base_env(home: str) -> Dict[str, str]:
     """A minimal environment. The operator's own variables stay outside."""
     os.makedirs(home, exist_ok=True)
@@ -1735,6 +1774,9 @@ def main() -> int:
             if problems:
                 for p in problems:
                     print(f"error: sandbox {p}", file=sys.stderr)
+                hint = bwrap_diagnosis()
+                if hint:
+                    print(hint, file=sys.stderr)
                 print("refusing to hand the agent a shell; fix the sandbox or pass "
                       "--unsandboxed", file=sys.stderr)
                 return 3

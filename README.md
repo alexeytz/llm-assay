@@ -1391,7 +1391,9 @@ uv run llm-assay.py agent http://localhost:8000/v1 --model MY-DEPLOYMENT --runs 
 `--harness-cmd`:
 
 - **`pi`** (the default), [Pi](https://github.com/earendil-works/pi): one-shot,
-  offline, with no extensions and a config directory of its own.
+  offline, with no extensions and a config directory of its own. Pi needs Node.js
+  22.19 or later (`npm install -g @earendil-works/pi-coding-agent`); npm installs
+  it on an older Node with only a warning, and it then fails at start.
 - **`hermes`**, [Hermes Agent](https://github.com/NousResearch/hermes-agent):
   `hermes chat` one-shot with `--format stream-json`, `--ignore-rules` (no
   AGENTS.md, SOUL.md or memory injected) and only the `terminal` and `file`
@@ -1478,7 +1480,10 @@ replaced with empty ones, and only the harness and the run's own directory
 mounted back. Where `systemd-run --user` exists, each run also gets a memory cap
 (`--memory`, default 1500M). A self-test runs first and refuses to start if
 anything private is still reachable. That makes it Linux-only; `--unsandboxed`
-runs the agent on your machine as you, and says so on every report. The API key
+runs the agent on your machine as you, and says so on every report. On Ubuntu
+23.10 and later, AppArmor stops bwrap from creating a user namespace unless bwrap
+has a profile that allows it; the self-test then fails, and prints the profile
+to install. The API key
 reaches the harness through the environment and is never written to its config.
 
 **What the harness sent is on the record.** The harness reaches the endpoint

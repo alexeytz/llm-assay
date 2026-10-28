@@ -200,7 +200,12 @@ class TokenizedCorpus:
                     text = f.read()
             else:
                 print(f"Downloading book from {self.book_url}...")
-                text = _download(self.book_url)
+                # Gutenberg serves \r\n. The cache is written as is and read back
+                # in text mode, which turns it into \n, so a first run tokenized
+                # different text from every later one (787,479 tokens against
+                # 787,094 for the default book) and could not pair with them.
+                # Normalised here, the first run reads what the cache will give.
+                text = _download(self.book_url).replace("\r\n", "\n").replace("\r", "\n")
                 # Basic cleanup
                 start_idx = text.find("*** START OF THE PROJECT GUTENBERG EBOOK")
                 if start_idx != -1:

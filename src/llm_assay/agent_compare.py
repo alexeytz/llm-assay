@@ -107,7 +107,7 @@ _SETTINGS = (("thinking", "thinking"), ("sampling", "sampling"), ("timeout_s", "
              ("sandboxed", "sandbox"), ("memory", "memory cap"),
              ("append_system_prompt", "appended system prompt"),
              ("system_prompt", "replacement system prompt"),
-             ("skills", "installed skills"))
+             ("skills", "installed skills"), ("agents_md", "AGENTS.md in the fixtures"))
 
 
 def _canonical(value: Any) -> str:

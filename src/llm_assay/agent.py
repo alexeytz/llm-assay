@@ -54,15 +54,18 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import aiohttp
 
 from . import __version__
-from .agent_tasks import HARD, ORDINARY, TASKS, Run, Task, hashes
+from .agent_tasks import GROUPS, HARD, ORDINARY, TASKS, Run, Task, hashes
+from .agent_tasks._base import AUTHOR
 from .agent_tasks.kit import kit as instrument_of
 from .agent_proxy import ABSENT, Proxy
 from .servermetrics import (ServerMetricsProbe, endpoint_identity, identity_drift,
                             kv_pool_warning, server_settings)
 
-#: Names --tasks accepts for a whole set, in the order the set runs.
-TASK_SETS = {"hard": [t.name for t in HARD], "ordinary": [t.name for t in ORDINARY],
-             "all": [t.name for t in HARD + ORDINARY]}
+#: Names --tasks accepts for a whole set, in the order the set runs: the groups, the
+#: two original sets (hard is still the default), and all.
+TASK_SETS = {**{g: [t.name for t in ts] for g, ts in GROUPS.items()},
+             "hard": [t.name for t in HARD], "ordinary": [t.name for t in ORDINARY],
+             "all": list(TASKS)}
 
 
 # --- harnesses --------------------------------------------------------------
@@ -107,6 +110,10 @@ class Pi:
     #: Text that replaces Pi's own preamble (its tools, rules and docs sections),
     #: read from the agent dir as SYSTEM.md; Pi still adds <cwd> and any addendum.
     system_prompt = ""
+    #: Skill directories (each holding a SKILL.md) installed in the run's agent dir,
+    #: under skills/<basename>/: Pi lists each by name and description in its system
+    #: prompt and the model reads the files itself. None by default.
+    skills: List[str] = []
 
     def __init__(self, command: Optional[str] = None):
         found = command or shutil.which("pi")
@@ -183,6 +190,9 @@ class Pi:
         if self.system_prompt:
             with open(os.path.join(home, "SYSTEM.md"), "w") as fh:
                 fh.write(self.system_prompt)
+        for src in self.skills:
+            shutil.copytree(src, os.path.join(home, "skills", os.path.basename(src.rstrip("/"))),
+                            ignore=shutil.ignore_patterns(".git"))
         self._model = f"{provider}/{model}"
 
     @staticmethod
@@ -1014,7 +1024,8 @@ async def run_one(task: Task, harness: Any, base_url: str, api_key: str, model: 
                   thinking: str, timeout: float, scratch: str, sandboxed: bool,
                   memory: Optional[str], context_window: int, max_tokens: int,
                   keep: Optional[str], proxy: Optional[Proxy] = None,
-                  sampling: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
+                  sampling: Optional[Dict[str, float]] = None,
+                  agents_md: str = "") -> Dict[str, Any]:
     """One task, one fresh workspace, one harness invocation; graded and voided."""
     rundir = tempfile.mkdtemp(dir=scratch)
     run_id = os.path.basename(rundir)
@@ -1024,6 +1035,8 @@ async def run_one(task: Task, harness: Any, base_url: str, api_key: str, model: 
     # Setup, version reads and grading are blocking subprocess work; in a
     # thread, so the other workers' harnesses keep streaming meanwhile.
     await asyncio.to_thread(task.setup, ws)
+    if agents_md:
+        await asyncio.to_thread(add_to_fixture, ws, {"AGENTS.md": agents_md})
     baseline = await asyncio.to_thread(hashes, ws)
     # The harness talks to the endpoint through the proxy, under this run's own
     # path, so what it sent is on the record and checked before it is answered.
@@ -1097,6 +1110,10 @@ async def run_one(task: Task, harness: Any, base_url: str, api_key: str, model: 
         "usage": usage, "reply": reply.strip()[-3000:],
         "requests": recorder.summary() if recorder else None,
     }
+    skills = [os.path.basename(d) for d in getattr(harness, "skills", [])]
+    if skills:
+        record["skill_files_read"] = skill_files_read(trace, skills)
+        record["skill_opened"] = any(f.endswith("/SKILL.md") for f in record["skill_files_read"])
     if keep:
         dest = os.path.join(keep, os.path.basename(rundir))
         with open(os.path.join(rundir, "events.jsonl"), "w") as fh:
@@ -1132,6 +1149,8 @@ def summarise(records: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
             continue
         s["runs"] += 1
         s["passed"] += bool(r["pass"])
+        if "skill_opened" in r:
+            s["skill_opened"] = s.get("skill_opened", 0) + bool(r["skill_opened"])
         s["timed_out"] += bool(r["timed_out"])
         # From the proxy: what the model got wrong in structure, not in substance.
         requests = r.get("requests") or {}
@@ -1163,6 +1182,8 @@ def render(report: Dict[str, Any]) -> str:
               "|:-----|-------:|:-------|-----:|----------:|----------------:|:------------|"]
     for name, s in report["summary"].items():
         soft = "; ".join(f"{k}: {v}/{s['runs']}" for k, v in s["soft"].items()) or "-"
+        if "skill_opened" in s:
+            soft = f"opened a skill: {s['skill_opened']}/{s['runs']}; " + soft
         lines.append(f"| {name} | {s['passed']}/{s['runs']} | "
                      f"[{s['ci95_low']:.2f}, {s['ci95_high']:.2f}] | {s['void']} | "
                      f"{s['timed_out']} | {s.get('tool_calls_malformed', 0)}/"
@@ -1232,7 +1253,8 @@ async def run(args: argparse.Namespace, harness: Any, api_key: str,
                 record = await run_one(
                     task, harness, args.base_url, api_key, args.model, args.thinking,
                     args.timeout, args.scratch, not args.unsandboxed, args.memory,
-                    context_window, args.max_tokens, args.keep, proxy, sampling)
+                    context_window, args.max_tokens, args.keep, proxy, sampling,
+                    getattr(args, "agents_md_text", ""))
                 if (record.get("requests") or {}).get("mismatch") and not stopped:
                     stopped.append("an earlier run's harness sent a request that does not "
                                    "match the arm's settings")
@@ -1279,6 +1301,12 @@ async def run(args: argparse.Namespace, harness: Any, api_key: str,
         "append_system_prompt_text": getattr(harness, "append_system_prompt", ""),
         "system_prompt": _prompt_digest(getattr(harness, "system_prompt", "")),
         "system_prompt_text": getattr(harness, "system_prompt", ""),
+        # {} when none, so it compares against a run that had one.
+        "skills": skill_digests(getattr(harness, "skills", [])),
+        # Folded into each fixture's last commit; the task digests are the
+        # untouched fixtures', so arms with and without it compare task by task.
+        "agents_md": _prompt_digest(getattr(args, "agents_md_text", "")),
+        "agents_md_text": getattr(args, "agents_md_text", ""),
         "load": {"requests_running_at_start": running, "preemptions": preempted},
         "warnings": warnings,
         "harness": harness.name, "harness_version": first.get("harness_version"),
@@ -1298,7 +1326,7 @@ async def run(args: argparse.Namespace, harness: Any, api_key: str,
 ARM_KEYS = {"name", "base_url", "model", "api_key_env", "harness", "harness_cmd", "tasks",
             "runs", "workers", "thinking", "timeout", "context_window", "max_tokens", "memory",
             "deployment", "sampling", "append_system_prompt",
-            "system_prompt"}
+            "system_prompt", "skills", "agents_md"}
 
 #: What --sampling and a models file's ``sampling:`` may pin, by their wire names.
 SAMPLING_KEYS = {"temperature", "top_p", "top_k", "min_p", "presence_penalty",
@@ -1371,6 +1399,89 @@ def read_prompt_file(path: Optional[str], harness: str,
         raise ValueError(f"{key} is supported for pi only, not {harness}")
     with open(os.path.expanduser(path)) as fh:
         return fh.read()
+
+
+def read_skills(paths: Optional[List[str]], harness: str) -> List[str]:
+    """Skill directories, each with a SKILL.md, for a harness that installs them; Pi only."""
+    if not paths:
+        return []
+    if isinstance(paths, str):
+        paths = [paths]
+    if harness != "pi":
+        raise ValueError(f"skills are supported for pi only, not {harness}")
+    out, names = [], set()
+    for p in paths:
+        d = os.path.abspath(os.path.expanduser(p))
+        if not os.path.isfile(os.path.join(d, "SKILL.md")):
+            raise ValueError(f"{p}: not a skill directory (no SKILL.md)")
+        name = os.path.basename(d)
+        if name in names:
+            raise ValueError(f"two skills named {name}")
+        names.add(name)
+        out.append(d)
+    return out
+
+
+def skill_digests(dirs: List[str]) -> Dict[str, str]:
+    """Each installed skill's name and a 16-hex digest of its files, paths and contents."""
+    out = {}
+    for d in dirs:
+        h = hashlib.sha256()
+        for root, subdirs, files in os.walk(d):
+            subdirs[:] = sorted(x for x in subdirs if x != ".git")
+            for f in sorted(files):
+                path = os.path.join(root, f)
+                h.update(os.path.relpath(path, d).encode() + b"\0")
+                with open(path, "rb") as fh:
+                    h.update(fh.read() + b"\0")
+        out[os.path.basename(d)] = h.hexdigest()[:16]
+    return out
+
+
+def skill_files_read(trace: List[Dict[str, Any]], names: List[str]) -> List[str]:
+    """Files of the installed skills the agent read or named in a command, as name/relpath.
+
+    Read off every string argument of every tool call, so a read tool, a ``cat``
+    and a ``sed -n`` all count; listing the directory alone does not.
+    """
+    if not names:
+        return []
+    pat = re.compile(r"skills/(%s)/([\w./-]*\w)" % "|".join(re.escape(n) for n in names))
+    seen: set = set()
+    for e in trace:
+        if e.get("role") != "call":
+            continue
+        args = e.get("args") or {}
+        for v in (args.values() if isinstance(args, dict) else [args]):
+            if isinstance(v, str):
+                seen.update(f"{m.group(1)}/{m.group(2)}" for m in pat.finditer(v))
+    return sorted(seen)
+
+
+def add_to_fixture(ws: str, files: Dict[str, str]) -> None:
+    """Fold ``files`` into the fixture's last commit, its author and dates kept.
+
+    The agent cannot tell them from the fixture: no extra commit, no later date.
+    Only these paths are committed (``--only``), so a fixture's deliberately
+    uncommitted state -- secret-commit's working tree -- stays uncommitted.
+    """
+    if not files:
+        return
+    base = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+    def git(*args: str, env: Optional[Dict[str, str]] = None) -> str:
+        return subprocess.run(["git", *args], cwd=ws, env={**base, **AUTHOR, **(env or {})},
+                              check=True, capture_output=True, text=True).stdout
+
+    date = git("log", "-1", "--format=%cI").strip()
+    for rel, text in files.items():
+        if os.path.lexists(os.path.join(ws, rel)):
+            raise ValueError(f"the fixture already has {rel}")
+        with open(os.path.join(ws, rel), "w") as fh:
+            fh.write(text)
+    git("add", "--", *files)
+    git("commit", "-q", "--amend", "--no-edit", "--only", "--", *files,
+        env={"GIT_COMMITTER_DATE": date})
 
 
 def _sampling_problem(sampling: Any) -> Optional[str]:
@@ -1465,7 +1576,8 @@ def main() -> int:
     ap.add_argument("--harness-cmd", help="the harness executable, if not on PATH")
     ap.add_argument("--tasks", nargs="+", choices=sorted(TASKS) + sorted(TASK_SETS),
                     default=["hard"],
-                    help="tasks or sets to run: hard (default), ordinary, all, or task names")
+                    help="tasks or sets to run: task names, a group (data, secrets, checks, "
+                         "others-work, craft), hard (default), ordinary or all")
     ap.add_argument("--runs", type=int, default=5, help="runs per task (default 5)")
     ap.add_argument("--workers", type=int, default=1,
                     help="runs in flight at once against one endpoint (default 1)")
@@ -1490,6 +1602,12 @@ def main() -> int:
     ap.add_argument("--system-prompt", metavar="FILE",
                     help="replace the harness's own system prompt with this file (pi only; "
                          "Pi keeps its <cwd> section)")
+    ap.add_argument("--skill", action="append", dest="skills", metavar="DIR",
+                    help="install this skill directory (holding a SKILL.md) for the agent; "
+                         "repeatable (pi only). The result records which of its files were read")
+    ap.add_argument("--agents-md", metavar="FILE",
+                    help="add this file to every fixture as AGENTS.md, inside its last commit "
+                         "(pi only)")
     ap.add_argument("--unsandboxed", action="store_true",
                     help="run the agent on the host, without bubblewrap")
     ap.add_argument("--keep", help="keep each run's workspace and trace under this directory")
@@ -1561,6 +1679,24 @@ def main() -> int:
                 return 2
             if text:
                 setattr(harnesses[arm.name], key, text)
+        if getattr(arm, "agents_md", None):
+            if arm.harness != "pi":
+                # Hermes runs with --ignore-rules and OMP with --no-rules: the file
+                # would be in the fixture and never in the prompt.
+                print(f"error: {arm.name}: agents_md is supported for pi only, not "
+                      f"{arm.harness}", file=sys.stderr)
+                return 2
+            try:
+                with open(os.path.expanduser(arm.agents_md)) as fh:
+                    arm.agents_md_text = fh.read()
+            except OSError as exc:
+                print(f"error: {arm.name}: {exc}", file=sys.stderr)
+                return 2
+        try:
+            harnesses[arm.name].skills = read_skills(getattr(arm, "skills", None), arm.harness)
+        except ValueError as exc:
+            print(f"error: {arm.name}: {exc}", file=sys.stderr)
+            return 2
         if not harnesses[arm.name].version():
             print(f"error: {harnesses[arm.name].command} --version did not answer",
                   file=sys.stderr)

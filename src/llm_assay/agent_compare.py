@@ -106,7 +106,8 @@ _SETTINGS = (("thinking", "thinking"), ("sampling", "sampling"), ("timeout_s", "
              ("engine_version", "engine"), ("deployment", "deployment"),
              ("sandboxed", "sandbox"), ("memory", "memory cap"),
              ("append_system_prompt", "appended system prompt"),
-             ("system_prompt", "replacement system prompt"))
+             ("system_prompt", "replacement system prompt"),
+             ("skills", "installed skills"))
 
 
 def _canonical(value: Any) -> str:

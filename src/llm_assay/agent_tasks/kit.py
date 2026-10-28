@@ -41,7 +41,7 @@ from typing import Any, Dict, Iterable, List, Tuple
 from ._base import Task, _SKIP_DIRS
 
 #: Bump when a pinned digest changes, and say why in the commit.
-KIT = "agent-kit-13"
+KIT = "agent-kit-14"
 
 
 def _strip(source: str) -> str:

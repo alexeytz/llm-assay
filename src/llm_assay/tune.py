@@ -96,7 +96,7 @@ class Detected:
         self.served_build: Optional[Dict[str, str]] = None
         self.spec_decode: Optional[bool] = None
         self.spec_acceptance_length: Optional[float] = None
-        self.thinking_controls: Optional[Dict[str, bool]] = None
+        self.thinking: Optional[ThinkingProbe] = None
         self.notes: List[str] = []
 
     @property
@@ -394,9 +394,7 @@ def detect(base_url: str, api_key: str = "EMPTY", model: Optional[str] = None) -
             )
 
     if found.served_model:
-        found.thinking_controls = probe_thinking_controls(
-            base_url, found.served_model, api_key
-        )
+        found.thinking = probe_thinking_controls(base_url, found.served_model, api_key)
         found.decode_tps = _measure_decode(base_url, found.served_model, api_key)
     if found.hf_model:
         found.tokenizer_ok = _tokenizer_loads(found.hf_model)
@@ -490,61 +488,270 @@ def detect(base_url: str, api_key: str = "EMPTY", model: Optional[str] = None) -
     return found
 
 
-# Candidate ways to ask a server to stop thinking. Which one works is a property
-# of the deployment's chat template, not of the model card: on an unsloth
-# conversion of Qwen3.8 the graded levels the official card documents render a
-# byte-identical prompt, while reasoning_effort="none" and enable_thinking=false
-# both prefill an empty <think></think> block.
+# Candidate ways to ask a server to stop thinking, and every graded level the
+# OpenAI API names. Which ones work is a property of the deployment's chat
+# template, not of the model card: on an unsloth conversion of Qwen3.8 the
+# graded levels the official card documents render a byte-identical prompt,
+# while reasoning_effort="none" and enable_thinking=false both prefill an empty
+# <think></think> block. Levels a template does not know are tried too, because
+# a template that raises on them is the deployment stating its own list:
+# Flash-Next's answers "high" with "Supported types are xhigh (default),
+# medium, and low."
 _THINKING_PROBES: Tuple[Tuple[str, Dict[str, Any]], ...] = (
     ("reasoning_effort=none", {"reasoning_effort": "none"}),
     ("enable_thinking=false", {"chat_template_kwargs": {"enable_thinking": False}}),
-    ("reasoning_effort=low", {"reasoning_effort": "low"}),
-    ("reasoning_effort=medium", {"reasoning_effort": "medium"}),
-    ("reasoning_effort=xhigh", {"reasoning_effort": "xhigh"}),
+    *((f"reasoning_effort={level}", {"reasoning_effort": level})
+      for level in ("minimal", "low", "medium", "high", "xhigh", "max")),
 )
+
+#: How a switch fared: it changed the prompt, it rendered what sending nothing
+#: renders (the default, or ignored), or the server refused the request.
+THINKING_STATES = ("live", "same", "rejected")
+
+
+class ThinkingProbe:
+    """Which thinking switches change the prompt, and how that was found out."""
+
+    def __init__(self, route: str, controls: Dict[str, str],
+                 rejection: Optional[str] = None, render_refusal: Optional[str] = None) -> None:
+        #: "render" (exact token ids) or "prompt_tokens" (a count, from a
+        #: one-token generation through the request path itself).
+        self.route = route
+        self.controls = controls
+        #: The server's own words on the first switch it refused.
+        self.rejection = rejection
+        #: Why /render could not be used, when it answered with a refusal.
+        self.render_refusal = render_refusal
+        #: The reasoning_effort values that make different prompts, one per
+        #: distinct rendering, in the API's order -- what a level sweep should
+        #: run. Empty when no graded level changes the prompt: then the only
+        #: sweep there is --thinking on off.
+        self.levels: List[str] = []
+
+
+class _Refused:
+    """A non-200 answer: its status and the server's own words."""
+
+    def __init__(self, resp: Any) -> None:
+        self.status = resp.status_code
+        self.message = _error_message(resp)
+
+
+def _error_message(resp: Any) -> str:
+    try:
+        err = resp.json().get("error")
+        msg = err.get("message") if isinstance(err, dict) else err
+    except (ValueError, AttributeError):
+        msg = None
+    return str(msg or resp.text or f"HTTP {resp.status_code}").strip()[:200]
 
 
 def probe_thinking_controls(
     base_url: str, model: str, api_key: str = "EMPTY"
-) -> Optional[Dict[str, bool]]:
+) -> Optional[ThinkingProbe]:
     """Which thinking switches actually change the prompt this server builds.
 
-    Uses /v1/chat/completions/render, so it costs no generation: render the same
-    message with and without each switch and compare the token ids. If the
-    rendered prompt is unchanged the model cannot possibly respond to the
+    Prefers /v1/chat/completions/render, which costs no generation: render the
+    same message with and without each switch and compare the token ids. If
+    the rendered prompt is unchanged the model cannot possibly respond to the
     setting -- there is no channel for it -- which is a far more reliable check
-    than generating twice and squinting at the token counts.
+    than generating twice and squinting at the completions.
 
-    Returns None when the endpoint has no render route.
+    vLLM 0.32 put /render behind --enable-scale-out and answers 403 without it,
+    which used to make this whole report vanish. The fallback is a one-token
+    generation per switch, compared on usage.prompt_tokens: a count rather than
+    the ids, but exact, and taken through the request path a benchmark uses.
+    /tokenize is not a substitute: it ignores a top-level reasoning_effort, and
+    passed as a template variable "none" is refused by a template the chat
+    route would have handed enable_thinking=false instead.
+
+    A switch the server refuses with a 400 is "rejected". Returns None when
+    neither route answers a request that carries no switch at all.
     """
-    url = _root(base_url) + "/v1/chat/completions/render"
-    body = {"model": model, "messages": [{"role": "user", "content": "hi"}]}
+    rendered = _render_settings(base_url, model, api_key, list(_THINKING_PROBES))
+    if rendered is None:
+        return None
+    controls: Dict[str, str] = {}
+    rejection: Optional[str] = None
+    for label, got in rendered.results.items():
+        if isinstance(got, _Refused):
+            if got.status == 400:
+                controls[label] = "rejected"
+                rejection = rejection or got.message
+        elif got is not None:
+            controls[label] = "live" if got != rendered.baseline else "same"
+    if not controls:
+        return None
+    probe = ThinkingProbe(rendered.route, controls, rejection, rendered.render_refusal)
+    efforts = [(label, extra["reasoning_effort"]) for label, extra in _THINKING_PROBES
+               if set(extra) == {"reasoning_effort"} and controls.get(label) in ("live", "same")]
+    if any(controls[label] == "live" for label, level in efforts if level != "none"):
+        seen: List[Any] = []
+        for label, level in efforts:
+            if rendered.results[label] not in seen:
+                seen.append(rendered.results[label])
+                probe.levels.append(level)
+    return probe
 
-    def render(extra: Optional[Dict[str, Any]] = None) -> Optional[list]:
+
+class _Rendered:
+    def __init__(self, route: str, baseline: Any, results: Dict[str, Any],
+                 render_refusal: Optional[str]) -> None:
+        self.route, self.baseline, self.results = route, baseline, results
+        self.render_refusal = render_refusal
+
+
+def _render_settings(base_url: str, model: str, api_key: str,
+                     settings: List[Tuple[str, Dict[str, Any]]]) -> Optional[_Rendered]:
+    """Each setting's rendering beside the rendering of a request carrying none.
+
+    A rendering is the token ids (render) or the prompt_tokens count (the
+    fallback), a ``_Refused`` for a non-200, or None when nothing answered.
+    None overall when even the bare request gets no rendering on either route.
+    """
+    body = {"model": model, "messages": [{"role": "user", "content": "hi"}]}
+    root = _root(base_url)
+    render_refusal: Optional[str] = None
+
+    def post(url: str, extra: Optional[Dict[str, Any]]) -> Optional[requests.Response]:
         try:
-            resp = requests.post(
-                url, json={**body, **(extra or {})}, headers=_headers(api_key), timeout=10
-            )
+            return requests.post(url, json={**body, **(extra or {})},
+                                 headers=_headers(api_key), timeout=30)
         except requests.RequestException:
             return None
-        if resp.status_code != 200:
+
+    def by_render(extra: Optional[Dict[str, Any]]) -> Any:
+        resp = post(root + "/v1/chat/completions/render", extra)
+        if resp is None:
             return None
+        if resp.status_code != 200:
+            return _Refused(resp)
         try:
             ids = resp.json().get("token_ids")
         except ValueError:
             return None
         return list(ids) if isinstance(ids, list) else None
 
-    baseline = render()
-    if baseline is None:
-        return None
+    def by_count(extra: Optional[Dict[str, Any]]) -> Any:
+        resp = post(base_url.rstrip("/") + "/chat/completions", {"max_tokens": 1, **(extra or {})})
+        if resp is None:
+            return None
+        if resp.status_code != 200:
+            return _Refused(resp)
+        try:
+            tokens = (resp.json().get("usage") or {}).get("prompt_tokens")
+        except ValueError:
+            return None
+        return tokens if isinstance(tokens, int) else None
 
-    effective: Dict[str, bool] = {}
-    for label, extra in _THINKING_PROBES:
-        rendered = render(extra)
-        if rendered is not None:
-            effective[label] = rendered != baseline
-    return effective or None
+    route, ask = "render", by_render
+    baseline = ask(None)
+    if isinstance(baseline, _Refused) and baseline.status in (401, 403):
+        render_refusal = baseline.message
+    if baseline is None or isinstance(baseline, _Refused):
+        route, ask = "prompt_tokens", by_count
+        baseline = ask(None)
+        if baseline is None or isinstance(baseline, _Refused):
+            return None
+    return _Rendered(route, baseline, {label: ask(extra) for label, extra in settings},
+                     render_refusal)
+
+
+#: The request fields that carry a thinking setting, which is all the guard sends.
+THINKING_FIELDS = ("reasoning_effort", "chat_template_kwargs")
+
+
+class ThinkingCheck:
+    """What the guard found about the thinking settings a run is about to send."""
+
+    def __init__(self, route: str) -> None:
+        self.route = route
+        #: arm label -> the server's refusal. Every request of such an arm would fail.
+        self.rejected: Dict[str, str] = {}
+        #: groups of two or more arms whose prompts render identically.
+        self.identical: List[List[str]] = []
+        #: arms that set a graded level on a deployment where no graded level
+        #: changes the prompt.
+        self.inert: List[str] = []
+
+    def errors(self) -> List[str]:
+        return [f"{label}: the server rejects this thinking setting, so every request would "
+                f"fail: {msg}" for label, msg in self.rejected.items()]
+
+    def warnings(self) -> List[str]:
+        basis = ("render the same prompt" if self.route == "render"
+                 else "render the same number of prompt tokens")
+        out = [f"{' and '.join(f'[{g}]' for g in group)} {basis}: one configuration under "
+               f"{len(group)} labels" for group in self.identical]
+        if self.inert:
+            out.append(f"{', '.join(self.inert)}: no reasoning_effort level changes the prompt "
+                       f"on this deployment (its chat template ignores the level), so the label "
+                       f"describes nothing the model sees")
+        if out and self.route == "prompt_tokens":
+            out.append("compared by prompt_tokens: an effort a service applies outside the "
+                       "prompt (a hosted API, a reasoning budget) cannot show here")
+        return out
+
+
+def describe_setting(fields: Dict[str, Any]) -> str:
+    """``reasoning_effort=low``, ``enable_thinking=false, reasoning_effort=none``,
+    or ``no thinking setting`` -- the request's own words, for a message."""
+    parts = [f"{k}={json.dumps(v) if not isinstance(v, str) else v}"
+             for k, v in sorted((fields.get("chat_template_kwargs") or {}).items())]
+    if "reasoning_effort" in fields:
+        parts.append(f"reasoning_effort={fields['reasoning_effort']}")
+    return ", ".join(parts) or "no thinking setting"
+
+
+def check_thinking(base_url: str, model: str, arms: Dict[str, Dict[str, Any]],
+                   api_key: str = "EMPTY") -> Optional[ThinkingCheck]:
+    """The guard every subcommand runs before it measures anything.
+
+    ``arms`` maps a label to the thinking fields that arm's requests carry
+    (see ``THINKING_FIELDS``). A rejected setting is an error -- every request
+    would fail -- and arms that render identically, or a graded level on a
+    template that ignores every level, are warnings: the result would label as
+    different what the model saw as the same. That is the trap the 27B's
+    banked arms were in for weeks, found by a tune check rather than by any
+    of them. None when the endpoint renders nothing, so the run goes ahead.
+    """
+    arms = {label: {k: v for k, v in fields.items() if k in THINKING_FIELDS}
+            for label, fields in arms.items()}
+    if not any(arms.values()):
+        return None
+    graded = [(label, extra) for label, extra in _THINKING_PROBES
+              if set(extra) == {"reasoning_effort"} and extra["reasoning_effort"] != "none"]
+    rendered = _render_settings(base_url, model, api_key,
+                                [(f"arm:{k}", v) for k, v in arms.items()] + graded)
+    if rendered is None:
+        return None
+    check = ThinkingCheck(rendered.route)
+    got = {label: rendered.results[f"arm:{label}"] for label in arms}
+    for label, value in got.items():
+        if isinstance(value, _Refused) and value.status == 400:
+            check.rejected[label] = value.message
+    # Grouped by setting, not by arm: two arms that send the same thinking
+    # fields differ in something else on purpose (a system prompt, a model).
+    seen: List[Tuple[Any, List[str]]] = []
+    for label, value in got.items():
+        if value is None or isinstance(value, _Refused):
+            continue
+        setting = describe_setting(arms[label])
+        for rendering, group in seen:
+            if rendering == value:
+                if setting not in group:
+                    group.append(setting)
+                break
+        else:
+            seen.append((value, [setting]))
+    check.identical = [group for _, group in seen if len(group) > 1]
+    levels = [rendered.results[label] for label, _ in graded]
+    answered = [v for v in levels if v is not None and not isinstance(v, _Refused)]
+    if answered and all(v == rendered.baseline for v in answered):
+        check.inert = [label for label, fields in arms.items()
+                       if fields.get("reasoning_effort") not in (None, "none")
+                       and label not in check.rejected]
+    return check
 
 
 def depth_ladder(found: Detected, steps: int = 4) -> List[int]:
@@ -600,6 +807,17 @@ def concurrency_ladder(found: Detected, depth: int, pp: int, tg: int) -> List[in
 
 def _fmt_int(value: Optional[int]) -> str:
     return f"{value:,}" if value is not None else "unknown"
+
+
+def _switches(labels: List[str]) -> str:
+    """Switch labels with the graded levels after one prefix: seven levels in
+    full made a 200-character line."""
+    prefix = "reasoning_effort="
+    levels = [k[len(prefix):] for k in labels if k.startswith(prefix)]
+    others = [k for k in labels if not k.startswith(prefix)]
+    if levels:
+        others.append(prefix + ", ".join(levels) if len(levels) > 1 else prefix + levels[0])
+    return ", ".join(others)
 
 
 def report(found: Detected) -> str:
@@ -659,12 +877,19 @@ def report(found: Detected) -> str:
             detail += f" (~{found.kv_max_concurrency:.1f} seqs at max ctx)"
         row("kv cache", detail)
 
-    if found.thinking_controls:
-        live = [k for k, v in found.thinking_controls.items() if v]
-        inert = [k for k, v in found.thinking_controls.items() if not v]
-        row("thinking", ", ".join(live) if live else "no switch changes the prompt")
-        if inert:
-            lines.append(f"  {'':<14}inert here: {', '.join(inert)}")
+    if found.thinking:
+        by = {state: _switches([k for k, v in found.thinking.controls.items() if v == state])
+              for state in THINKING_STATES}
+        row("thinking", by["live"] or "no switch changes the prompt")
+        if by["same"]:
+            lines.append(f"  {'':<14}same as sending none: {by['same']}")
+        if by["rejected"]:
+            lines.append(f"  {'':<14}rejected: {by['rejected']}")
+            lines.append(f"  {'':<14}  server: {found.thinking.rejection}")
+        if found.thinking.route == "prompt_tokens":
+            why = (f" (/render refused: {found.thinking.render_refusal})"
+                   if found.thinking.render_refusal else " (no /render route)")
+            lines.append(f"  {'':<14}compared by prompt_tokens{why}")
 
     if found.sliding_window:
         row("sliding win", f"{_fmt_int(found.sliding_window)} tokens")
@@ -766,6 +991,16 @@ def build_presets(found: Detected) -> List[Tuple[str, str, List[str]]]:
             f"throughput under load; {conc[-1]} concurrent requests fit this KV cache at d{deep}",
             ["--pp", "2048", "--tg", "256", "--exact-tg", "--depth", str(deep),
              "--runs", "3", "--concurrency", *[str(c) for c in conc], *cached],
+        ))
+
+    levels = found.thinking.levels if found.thinking else []
+    if len(levels) > 1:
+        presets.append((
+            "levels",
+            f"one shape at each thinking level that makes a different prompt here "
+            f"({', '.join(levels)})",
+            ["--pp", "512", "--tg", "256", "--exact-tg", "--depth", "0", "--runs", "5",
+             "--stats", "ci", "--reasoning-effort", *levels],
         ))
 
     longest = max_depth_for_long_run(found)
@@ -957,6 +1192,27 @@ def _probe_command(found: Detected, args: List[str],
     return _wrap(tokens, "  ")
 
 
+def level_arms(found: Detected) -> List[str]:
+    """A models file for ``agent --models``: one arm per level a sweep should run.
+
+    The agent spells "none" as its harness level "off". Sampling is left for the
+    operator to pin from the model card, and the task set to choose: those are
+    decisions about the experiment, not facts about the endpoint.
+    """
+    levels = found.thinking.levels if found.thinking else []
+    if len(levels) < 2 or not found.served_model:
+        return []
+    out = ["# One agent arm per thinking level this endpoint renders differently. Pin",
+           "# sampling (the model card's values) and choose the tasks before running.",
+           "defaults: {runs: 20, harness: pi, tasks: [hard]}",
+           "models:"]
+    for level in levels:
+        thinking = "off" if level == "none" else level
+        out.append(f"  - {{name: {found.served_model}-{thinking}, base_url: {found.base_url}, "
+                   f"model: {found.served_model}, thinking: {json.dumps(thinking)}}}")
+    return out
+
+
 def suggestions(found: Detected) -> str:
     lines = ["", "Suggested runs", "", cache_guidance(found)]
     for key, description, args in build_presets(found):
@@ -978,6 +1234,21 @@ def suggestions(found: Detected) -> str:
     lines.append("")
     for note in _probe_notes(found, args):
         lines.append(note)
+        lines.append("")
+    levels = found.thinking.levels if found.thinking else []
+    if len(levels) > 1:
+        lines.append(
+            f"  Thinking levels: {', '.join(levels)} each make a different prompt here, so\n"
+            "  each is its own configuration. The `levels` preset above measures speed at\n"
+            "  each; for quality, run the probe once per level with --reasoning-effort L\n"
+            "  (and --save-result per level), and for agent behaviour, one arm per level:")
+        lines.append("")
+        lines.extend(f"    {line}" for line in level_arms(found))
+        lines.append("")
+    elif found.thinking:
+        lines.append(
+            "  No reasoning_effort level changes the prompt here, so there is no level\n"
+            "  sweep to run: only --thinking on off makes two configurations.")
         lines.append("")
     if found.tokenizer:
         lines.append(
@@ -1058,7 +1329,10 @@ def as_dict(found: Detected) -> Dict[str, Any]:
             "kv_max_concurrency": found.kv_max_concurrency,
             "block_size": found.block_size,
             "sliding_window": found.sliding_window,
-            "thinking_controls": found.thinking_controls,
+            "thinking_controls": found.thinking.controls if found.thinking else None,
+            "thinking_route": found.thinking.route if found.thinking else None,
+            "thinking_rejection": found.thinking.rejection if found.thinking else None,
+            "thinking_levels": found.thinking.levels if found.thinking else None,
         },
         "depth_ladder": depth_ladder(found),
         "notes": list(found.notes),

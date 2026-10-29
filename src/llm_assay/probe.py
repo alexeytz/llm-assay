@@ -54,6 +54,7 @@ from . import __version__
 from .client import LLMClient, _answer_text
 from .config import BenchmarkConfig
 from .corpus import load_tokenizer, tokenizer_fallback as _tokenizer_fallback
+from .tune import check_thinking
 from .servermetrics import (
     ServerCounters, ServerMetricsProbe, _build_summary, endpoint_identity,
     engine_version, identity_drift, served_model, server_build,
@@ -1485,6 +1486,19 @@ async def run(
             via = f" via {checked['provider']}" if checked["provider"] else ""
             print(f"  pre-flight ok: '{model}' answered{via}",
                   file=sys.stderr, flush=True)
+        # The thinking guard: a rejected setting fails here with the server's own
+        # list, and a level this deployment's template ignores is said out loud.
+        thinking_warnings: List[str] = []
+        guard = await asyncio.to_thread(
+            check_thinking, client.base_url, model,
+            {"probe": _request_body(client, "", 1, thinking, "", extra_body, reasoning_effort)},
+            api_key)
+        if guard is not None:
+            if guard.errors():
+                raise PreflightRefused("; ".join(guard.errors()))
+            thinking_warnings = guard.warnings()
+            for w in thinking_warnings:
+                print(f"  WARNING: {w}", file=sys.stderr, flush=True)
         # Money spent so far, from the endpoint's own `usage.cost`. A cap the
         # tool cannot measure is no cap, so an endpoint that reports no cost
         # refuses the run rather than letting it proceed unguarded.
@@ -1915,6 +1929,7 @@ async def run(
         # the budget against them. None values are unknown, not unlimited.
         "limits": limits,
         "budget_warnings": refusals + budget_warnings,
+        "thinking_warnings": thinking_warnings,
         # Why the run stopped early, or None when it ran every trial asked of
         # it. Cells after the stop are absent; the one it stopped in records
         # only the trials it ran.
@@ -2104,6 +2119,7 @@ def render(report: Dict[str, Any]) -> str:
                         f"providers ({', '.join(providers)}): the pin did not "
                         "hold, and the cells may mix precisions")
     warnings += report.get("budget_warnings") or []
+    warnings += report.get("thinking_warnings") or []
     for r in report["results"]:
         if r.get("void"):
             warnings.append(f"d{r['depth']} {r['rung']}: {r['void']} trial(s) "

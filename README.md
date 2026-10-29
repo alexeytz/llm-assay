@@ -27,7 +27,8 @@ uv run llm-assay.py tune http://localhost:8000/v1 --write ./run-local.sh
 ```
 
 `./run-local.sh --help` lists the other presets: a depth sweep, decode, concurrency,
-the deepest context the server accepts, and `probe` for quality. Results land in
+the deepest context the server accepts, the thinking levels it honours, and `probe`
+for quality. Results land in
 `results/` as JSON. From there, [`compare`](#comparing-two-runs-statistically) A/B
 tests two saved runs, and [Usage](#usage) covers every flag.
 
@@ -394,7 +395,7 @@ Within a single run the probability of accidental cache hits is small, so you ra
 -   `--thinking on|off`: Sweep thinking as a benchmark dimension; rows are labelled `(think=on)`/`(think=off)`. `off` sends both spellings servers honour - `reasoning_effort: "none"` and `chat_template_kwargs.enable_thinking: false` - because deployments honour different ones. Measured on a Qwen3.8 served by vLLM: prefill unchanged, decode **48.50 t/s thinking vs 38.15 t/s not**, tracking speculative acceptance 3.03 vs 2.36 - reasoning text is repetitive, so the draft head predicts it better and each token is cheaper.
 -   `--reasoning-effort`: One or more reasoning effort levels to benchmark (e.g. `--reasoning-effort none low high`). Each level runs the full suite and results are labelled with it (e.g. `tg1024 (re=none)`). Sent as a top-level `reasoning_effort` field. Default: not sent.
 
-    > **Check the levels do anything before sweeping them.** Whether a graded level has an effect depends on the deployment's chat template, not the model card. On an unsloth conversion of Qwen3.8 served by vLLM, `low`, `medium` and `xhigh` render a *byte-identical* prompt - only `none` differs, by prefilling an empty `<think></think>` block - so sweeping them runs the suite repeatedly over a single configuration. `llm-assay.py tune <url>` probes the endpoint and reports which switches are live.
+    > **Check the levels do anything before sweeping them.** Whether a graded level has an effect depends on the deployment's chat template, not the model card. A server can also replace the model's template with its own (`--chat-template` on vLLM): on one Qwen3.8 deployment served that way, `low`, `medium` and `xhigh` rendered a *byte-identical* prompt - only `none` differed, by prefilling an empty `<think></think>` block - so sweeping them would have run the suite repeatedly over a single configuration, while the same weights on the model's own template honour all three. `llm-assay.py tune <url>` probes the endpoint and reports which switches are live, which render the same prompt as sending none, and which the server rejects. The benchmark, `probe` and `agent` run the same check on the settings they are about to send, before measuring anything: a setting the server rejects stops the run with the server's own message, and two arms that render the same prompt, or a level on a template that ignores every level, are warned about (and saved with an agent arm or a probe result). It costs one short request per setting.
 -   `--concurrency`: List of concurrency levels (number of concurrent requests per test) (Default: [1]).
 -   `--save-result`: File to save results to.
 -   `--format`: Output format: 'md', 'json', 'csv'. Default: taken from the
@@ -631,14 +632,17 @@ uv run llm-assay.py tune http://localhost:8000/v1
 
 ```
 Detected
-  endpoint      http://localhost:8000/v1  (vLLM 0.27.1)
-  model         unsloth/Qwen3.8-27B  (served as MY-DEPLOYMENT)
+  endpoint      http://localhost:8000/v1  (vLLM 0.32.0)
+  model         nvidia/Qwen3.8-Flash-Next-NVFP4  (served as MY-DEPLOYMENT)
   max ctx       262,144 tokens
   prefix cache  ENABLED -- cached-follow-up measurement is meaningful here
-  spec decode   ACTIVE (accept len 2.65) -- expect wide decode spread; sample adaptively
-  kv cache      463,910 tokens (~1.8 seqs at max ctx)
-  thinking      reasoning_effort=none, enable_thinking=false
-                inert here: reasoning_effort=low, reasoning_effort=medium, reasoning_effort=xhigh
+  spec decode   ACTIVE (accept len 2.83) -- expect wide decode spread; sample adaptively
+  kv cache      374,086 tokens (~1.4 seqs at max ctx)
+  thinking      enable_thinking=false, reasoning_effort=none, low, medium
+                same as sending none: reasoning_effort=xhigh
+                rejected: reasoning_effort=minimal, high, max
+                  server: Unexpected reasoning effort minimal. Supported types are xhigh (default), medium, and low.
+                compared by prompt_tokens (/render refused: Scale-out endpoints are disabled. Restart vllm serve with --enable-scale-out to enable them.)
 
 
 
@@ -646,7 +650,7 @@ Detected
 Suggested runs
 
   # smoke -- is the endpoint alive and sane -- run this first
-  uv run llm-assay.py --base-url http://localhost:8000/v1 --model unsloth/Qwen3.8-27B \
+  uv run llm-assay.py --base-url http://localhost:8000/v1 --model nvidia/Qwen3.8-Flash-Next-NVFP4 \
       --served-model-name MY-DEPLOYMENT --pp 512 --tg 64 --exact-tg --depth 0 --runs 3 \
       --latency-mode generation --seed $RANDOM
   …
@@ -663,7 +667,7 @@ Where the numbers come from, and why they matter:
 | `spec decode` | `vllm:spec_decode_*` / `llamacpp:spec_decode_*` counters; Strata's draft totals | Decode presets switch to `--target-ci` sampling instead of a fixed `--runs` |
 | tokenizer | the served name; else the base model a GGUF file name spells, if its tokenizer loads | Adds `--tokenizer` when the served name is an alias rather than a repository, so shapes are counted in the model's own vocabulary |
 | `kv cache` | `kv_cache_size_tokens` | Concurrency levels are capped at what fits, so no request sits queued |
-| thinking switches | `/v1/chat/completions/render` | Which of `reasoning_effort=none`, `enable_thinking=false` and the graded levels actually change the prompt |
+| thinking switches | `/v1/chat/completions/render`; where it is refused (vLLM 0.32 needs `--enable-scale-out`) or absent, `usage.prompt_tokens` of a one-token request per switch | Which of `reasoning_effort=none`, `enable_thinking=false` and every graded level the OpenAI API names (`minimal` to `max`) change the prompt, which render what sending none renders (the default, or ignored), and which the server rejects -- quoting its error, which on a template that checks the level is its own list: `Supported types are xhigh (default), medium, and low.` |
 
 Every suggested run carries the consequence of that detection with it, in the
 console output and in the generated runner, because the fact and the commands
@@ -755,7 +759,13 @@ server is restarted with different settings. It takes env overrides
 Presets are sized to the endpoint, so the list varies: `smoke` and `sweep` always
 appear, `concurrency` only when more than one request fits the KV cache, and
 `long` only when the model's context is deep enough for it to differ from the
-sweep.
+sweep, and `levels` only when two or more `reasoning_effort` values make different
+prompts on this deployment: one short shape at each of them, and only them, so a
+level the template ignores or refuses is never swept. Beside it `tune` prints a
+models file for `agent --models` with one arm per level (`none` becomes the
+harness level `off`; sampling and tasks are left for you to set) and says to run
+the probe once per level for quality. Where no level changes the prompt it says
+so, and that `--thinking on off` is the only sweep there.
 
 `--seed $RANDOM` is deliberate in the suggestions. A fixed seed sends
 byte-identical prompts, so a repeat invocation is served from the prefix cache and
@@ -1287,6 +1297,10 @@ means it said nothing, not that there is no limit), and `budget_warnings` what
 was said about the budget against them. Each cell's `truncated` counts the
 trials that finished `length` - the budget ended them - and the table notes any
 cell where that is non-zero.
+`thinking_warnings` is what the thinking check said before the first trial:
+a `--reasoning-effort` this deployment's template ignores, for instance. An
+empty list means it found nothing to say, or the endpoint rendered nothing it
+could compare.
 
 `vocabulary` is a digest of the generator's word lists, the outlier snippet and
 the question: two results with different values read different text from the

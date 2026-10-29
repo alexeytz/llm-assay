@@ -58,6 +58,7 @@ from .agent_tasks import GROUPS, HARD, ORDINARY, TASKS, Run, Task, hashes
 from .agent_tasks._base import AUTHOR
 from .agent_tasks.kit import kit as instrument_of
 from .agent_proxy import ABSENT, Proxy
+from .tune import THINKING_FIELDS, check_thinking
 from .servermetrics import (ServerMetricsProbe, endpoint_identity, identity_drift,
                             kv_pool_warning, server_settings)
 
@@ -1598,6 +1599,53 @@ def render_matrix(reports: Dict[str, Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _thinking_fields(expected: Dict[str, Any]) -> Dict[str, Any]:
+    """The request body an arm's ``expected_request`` describes, thinking fields only."""
+    body: Dict[str, Any] = {}
+    for key, value in expected.items():
+        if value is ABSENT:
+            continue
+        head, _, tail = key.partition(".")
+        if head not in THINKING_FIELDS:
+            continue
+        if tail:
+            body.setdefault(head, {})[tail] = value
+        else:
+            body[head] = value
+    return body
+
+
+def thinking_guard(arms: List[argparse.Namespace], harnesses: Dict[str, Any],
+                   keys: Dict[str, str]) -> Optional[Dict[str, List[str]]]:
+    """The thinking guard, per endpoint and model, before any run.
+
+    Renders what each arm's harness will send (the proxy's own expectation of
+    it): a rejected level is an error, since every request would fail; arms
+    that render the same, or a level the template ignores, are warnings,
+    printed and saved with the arm. None when a check refused the run. Kept
+    out of run()/run_arms(), which the runner digest covers.
+    """
+    by_endpoint: Dict[Tuple[str, str], List[argparse.Namespace]] = {}
+    for arm in arms:
+        by_endpoint.setdefault((arm.base_url, arm.model), []).append(arm)
+    saved: Dict[str, List[str]] = {}
+    refused = False
+    for (base_url, model), group in by_endpoint.items():
+        fields = {arm.name: _thinking_fields(harnesses[arm.name].expected_request(arm.thinking))
+                  for arm in group}
+        check = check_thinking(base_url, model, fields, keys[group[0].name] or "EMPTY")
+        if check is None:
+            continue
+        for problem in check.errors():
+            print(f"error: {problem}", file=sys.stderr)
+            refused = True
+        for w in check.warnings():
+            print(f"WARNING: {w}", file=sys.stderr)
+            for arm in group:
+                saved.setdefault(arm.name, []).append(w)
+    return None if refused else saved
+
+
 def main() -> int:
     if sys.argv[1:2] == ["regrade"]:
         from .agent_regrade import main as regrade_main
@@ -1752,6 +1800,9 @@ def main() -> int:
             except HarnessMissing as exc:
                 print(f"error: {exc}", file=sys.stderr)
                 return 3
+    guard_warnings = thinking_guard(arms, harnesses, keys)
+    if guard_warnings is None:
+        return 2
     if args.keep:
         os.makedirs(args.keep, exist_ok=True)
         args.keep = os.path.abspath(args.keep)
@@ -1786,6 +1837,8 @@ def main() -> int:
         reports = asyncio.run(run_arms(arms, harnesses, keys))
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
+    for name, extra in guard_warnings.items():
+        reports[name]["warnings"] = list(reports[name].get("warnings") or []) + extra
 
     single = len(reports) == 1 and not args.models_file
     if args.as_json:

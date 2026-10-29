@@ -15,6 +15,7 @@ from .prompts import PromptGenerator
 from .client import LLMClient
 from .runner import BenchmarkRunner
 from .progress import ProgressEmitter
+from .tune import check_thinking
 
 async def main_async() -> int:
     # 1. Parse Configuration
@@ -90,6 +91,27 @@ async def main_async() -> int:
         config.exact_tg,
         config.endpoint,
     )
+
+    # The thinking guard, before anything is measured: a setting the server
+    # rejects would fail every request, and two arms whose prompts render the
+    # same are one configuration the table would label as two.
+    if config.endpoint == "chat":
+        arms = {
+            " ".join(p for p in (f"think={t}" if t else "", f"effort={e}" if e else "") if p)
+            or "default": client._build_generation_payload(
+                [{"role": "user", "content": "hi"}], 1, False, reasoning_effort=e, thinking=t)
+            for t in (config.thinking_modes or [None])
+            for e in (config.reasoning_efforts or [None])
+        }
+        guard = await asyncio.to_thread(
+            check_thinking, config.base_url, config.served_model_name, arms, config.api_key)
+        if guard is not None:
+            for problem in guard.errors():
+                print(f"error: {problem}", file=sys.stderr)
+            if guard.errors():
+                return 2
+            for w in guard.warnings():
+                print(f"[WARNING] {w}")
 
     progress = None
     if config.emit_progress:

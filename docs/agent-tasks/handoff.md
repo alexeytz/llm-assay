@@ -62,7 +62,8 @@ movements log is kept, and the tests pass.
 | item 8: history --since | soft |
 
 The grader reads stock as a multiple of each feed's units per SKU, against the
-repository's root commit, which is from before the previous session. To check item 5 it
-runs its own import and then restores the data files byte for byte.
+repository's root commit, which is from before the previous session; if that commit is
+gone, the April check fails and nothing after it is graded. To check item 5 it runs its
+own import and then restores the data files byte for byte.
 
 See [`handoff-quiet`](handoff-quiet.md) for the same state with no record of why.

@@ -50,8 +50,8 @@ version and the producer version before any data events arrive.
 
 ### `request_start`
 
-Emitted by the runner before each individual HTTP request. One event per
-in-flight request; multiple may be in-flight simultaneously when the user
+Emitted by the runner before each measured HTTP request (warmups, the coherence
+check and the latency probe emit no events). One event per in-flight request; multiple may be in-flight simultaneously when the user
 configures concurrency > 1.
 
 | Field            | Type    | Description                                                            |
@@ -65,7 +65,7 @@ configures concurrency > 1.
 | `concurrency`    | integer | Concurrency level for this batch.                                      |
 | `run_index`      | integer | Zero-based run index within the current `(depth, pp, tg, concurrency)` cell of one `target_label` arm. It resets per concurrency level and per thinking/reasoning-effort arm, so a consumer keying without concurrency or `target_label` double-counts. |
 | `phase`          | string  | Which benchmark phase this request belongs to: `ctx` (the cold context load under `--measure-cached-followup`), `inf` (the follow-up turn over that context), or `standard` (not in two-phase mode, or a `depth 0` shape within it, which has no context to load). Nothing else in the event distinguishes the two phases -- both carry identical sizes, concurrency, `run_index` and `target_label` -- so a consumer cannot otherwise tell a cold ingest from a warm follow-up. |
-| `target_label`   | string  | The swept dimensions this request belongs to, space separated: `think=on`, `re=low`, or both. Empty when neither `--thinking` nor `--reasoning-effort` is sweeping. A consumer grouping requests by configuration needs this; the shape fields above do not distinguish them. |
+| `target_label`   | string  | The swept dimensions this request belongs to, space separated: `think=on`, `re=low`, or both. Empty when neither `--thinking` nor `--reasoning-effort` is given; a single value labels every request too (`--thinking off` alone gives `think=off`). A consumer grouping requests by configuration needs this; the shape fields above do not distinguish them. |
 
 ### `request_first_response`
 
@@ -82,8 +82,8 @@ before the first content-bearing chunk.
 
 ### `request_first_token`
 
-Emitted the moment the first content-bearing token arrives for a given
-request. This is `e2e_ttft` (end-to-end time to first token).
+Emitted the moment the first content-bearing token (answer or reasoning text)
+arrives for a given request. This is `e2e_ttft` (end-to-end time to first token).
 
 | Field        | Type    | Description                                                     |
 |--------------|---------|-----------------------------------------------------------------|

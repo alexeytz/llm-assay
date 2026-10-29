@@ -82,8 +82,9 @@ of doing things.
   `unittest` as it stands after the run. **"Ran the tests"** looks for a test command
   in the agent's own tool calls.
 - **Void, not failed**: if the endpoint's identity changes, the harness changes
-  version, the harness exits non-zero without timing out (unless it reports that the model
-  stopped itself, which is the model's), or the endpoint fails the
+  version, the harness sends a request that does not match the arm's settings (the
+  proxy refuses it), the harness exits non-zero without timing out (unless it reports
+  that the model stopped itself, which is the model's), or the endpoint fails the
   last request while the model was not looping, the run says nothing about the model.
   It is reported and left out of the pass rate. A timeout is a failure.
 - **A task has a digest.** The kit (`src/llm_assay/agent_tasks/kit.py`) hashes each task's prompt,

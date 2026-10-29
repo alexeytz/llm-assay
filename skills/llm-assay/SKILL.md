@@ -20,7 +20,8 @@ you can read the part you need instead of all of it.
   step and no console command; uv resolves dependencies on first run. If `uv` is
   missing, the README's *Setup* section has the install line and the pip fallback.
 - **Keys go in the environment**: `export LLM_ASSAY_API_KEY=...`. `tune`, the
-  benchmark, `probe` and `agent` all read it. Never put a key on a command line (it is
+  benchmark, `probe`, `agent`, `divergence` and `scenario` all read it (`scenario`
+  reads it nowhere else). Never put a key on a command line (it is
   visible in `ps`) or in a file you write. In a models file use `api_key_env:`.
 - **Ask before loading someone else's endpoint.** A benchmark saturates the server;
   on a hosted API every request costs money. Confirm the endpoint is the user's, and
@@ -53,15 +54,18 @@ It reads `/v1/models`, `/metrics` and (where available) the render endpoint, and
 prints what it detected and a list of suggested runs. Tell the user what it found,
 in particular:
 
-- **prefix cache** ENABLED / disabled / unknown - decides whether cached-follow-up
+- **prefix cache** ENABLED / DISABLED / unknown - decides whether cached-follow-up
   rows mean anything, and why every preset uses `--seed $RANDOM`.
 - **spec decode** ACTIVE - decode will be noisy (acceptance depends on content), so
   decode presets sample adaptively (`--target-ci`) instead of a fixed `--runs`.
 - **kv cache** size - caps the concurrency levels it suggests.
-- **thinking** - which switches actually change the prompt here. Levels listed as
-  *inert* render the identical prompt, so sweeping them measures one config twice.
-- a **tokenizer** line when the served name is an alias or a GGUF - shapes are then
-  counted in the right vocabulary only if `--tokenizer` is passed (tune adds it).
+- **thinking** - which switches actually change the prompt here. A level listed as
+  "same as sending nothing" renders the prompt the server builds with no level at all,
+  so sweeping it beside the default measures one config twice; "rejected" levels make
+  every request fail, and the benchmark, probe and agent refuse to start on them.
+- a **tokenizer** note under the suggestions when the served name is an alias or a
+  GGUF - shapes are then counted in the right vocabulary only if `--tokenizer` is
+  passed (tune adds it when it found one that loads; otherwise it says to).
 
 Then save the suggestions as a script and run the smoke preset:
 
@@ -73,6 +77,14 @@ uv run llm-assay.py tune http://localhost:8000/v1 --write ./run-local.sh
 
 `tune --json` gives the same as data (argv lists you can exec). Re-run `tune` after
 the server is restarted with different settings; the script says so in its header.
+
+**On a deployment nobody has measured yet, run `./run-local.sh qualify` first**
+(`scenario qualify`, README *One question, end to end*): a canary reply with the
+deployment's default thinking (and with thinking off, where an off switch works), the smoke benchmark, a short probe and, when tune found a harness, three agent
+runs, graded in `VERDICT.txt`. A FAIL there - the think block in the content,
+an answer only in reasoning - means every later number is wrong; fix the server first.
+To A/B a change to the server, `ab-before`, change it, `ab-after`: same seed both
+sides, and the verdict says what the endpoint reports changed.
 
 ## Step 2 - speed: the benchmark
 
@@ -90,8 +102,9 @@ Reading the table (README *Metrics*):
 - `pp2048 @ d16384` - prefill: a 2048-token prompt on top of 16k of context. `t/s` is
   prompt tokens / `est_ppt` (time to first generated token minus measured latency).
 - `tg128 @ d16384` - decode speed over the generated tokens.
-- `ctx_pp` / `ctx_tg` rows appear only with `--measure-cached-followup`: the cold
-  context load, then a follow-up over the cached context.
+- `ctx_pp` / `ctx_tg` rows appear only with `--measure-cached-followup`: they are the
+  cold context load, and the `pp`/`tg` rows beside them are then a follow-up over the
+  cached context.
 - `±` is the sample std by default; `--stats ci` shows the 95% interval, which is
   what to look at when asking "is this difference real". `--legend` explains every
   printed row and column in plain words - offer it to a first-time user.
@@ -109,20 +122,24 @@ Reading the table (README *Metrics*):
 | tokenizer fell back to gpt2 | the shape labels are approximate; pass `--tokenizer` |
 
 **Exit codes**: 0 measured; 1 a whole shape produced nothing, or nothing was
-measured; 4 void - the endpoint changed identity mid-run, so the numbers belong to no
+measured; 2 a usage error, or a `--thinking` / `--reasoning-effort` setting the server
+rejects (checked before anything is measured); 4 void - the endpoint changed identity mid-run, so the numbers belong to no
 single model. Do not report a non-zero run as a result.
 
 ## Step 3 - A/B two configurations
 
 The trap (README *The trap: a fixed `--seed` warms the cache*): the same command run
 twice with the same seed is served from the cache the first run filled, and `compare`
-will declare it +110% faster than itself. So:
+will declare it significantly faster than itself (+150% prefill in the README's
+example). So:
 
 ```bash
 # prime once so both sides start equally warm (or use --cold on both and accept unpaired)
 uv run llm-assay.py --base-url ... --model ... --seed 1234 --runs 5 --save-result /tmp/prime.json
 uv run llm-assay.py --base-url ... --model ... --seed 1234 --runs 5 --save-result results/baseline.json
-# ... the user changes ONE thing on the server, restarts it ...
+# ... the user changes ONE thing on the server, restarts it, and primes again
+#     (a restart empties the cache, which would leave only the baseline warm) ...
+uv run llm-assay.py --base-url ... --model ... --seed 1234 --runs 5 --save-result /tmp/prime2.json
 uv run llm-assay.py --base-url ... --model ... --seed 1234 --runs 5 --save-result results/candidate.json
 uv run llm-assay.py compare results/baseline.json results/candidate.json
 uv run llm-assay.py compare results/baseline.json results/candidate.json --metric pp_throughput
@@ -134,8 +151,8 @@ uv run llm-assay.py compare results/baseline.json results/candidate.json --metri
 - At least 3 runs per side; 5+ on a speculative-decoding server.
 - `no difference` is **not** "the same". To claim a change is harmless use
   `--equivalence-margin 0.03` (EQUIVALENT vs INCONCLUSIVE).
-- To A/B thinking on/off or reasoning effort: `compare ... --across thinking` (unpaired
-  by design).
+- To A/B thinking on/off or reasoning effort: `compare ... --across thinking` or
+  `--across reasoning_effort` (unpaired by design).
 - `--fail-on-regression` turns it into a CI gate.
 - Read the comparability warnings `compare` prints first: a setting that differs
   between the files other than the one under test means the comparison measures it.
@@ -173,7 +190,10 @@ Hands an installed coding harness a small repository with a trap in it and grade
 **files** afterwards, never the model's own account. Needs: Linux with bubblewrap
 (the sandbox; `--unsandboxed` runs the agent as the user on their machine - say so
 plainly before using it), and one harness installed: `pi` (default), `hermes`,
-`opencode` or `omp` (`--harness`, `--harness-cmd` if not on PATH).
+`opencode` or `omp` (`--harness`, `--harness-cmd` if not on PATH). The runner `tune`
+wrote has an `agent-<harness>` preset for each harness it found on PATH
+(`RUNS=1 EXTRA="--tasks sync" ./run-local.sh agent-pi` is the smoke); none listed
+means none was found.
 
 ```bash
 # smoke: one run of one task
@@ -188,8 +208,9 @@ uv run llm-assay.py agent http://localhost:8000/v1 --model MY-MODEL --tasks all 
 - **Workers share the endpoint.** Pass rates hold until the KV cache runs out; then
   the server preempts, runs crawl and time out, and you are measuring the box. If
   timeouts appear, lower `--workers`. `wall_s` compares only at equal worker counts.
-- **Void is not failed**: a run where the endpoint changed, the harness crashed, or a
-  request was refused is void and left out. Report voids; many voids means fix the
+- **Void is not failed**: a run where the endpoint changed, the harness crashed or
+  changed version, the server failed its last turn, or a request was refused is void
+  and left out (a timeout is a failure, not a void). Report voids; many voids means fix the
   setup, not the model.
 - **Read a few kept traces** (`--keep`) before trusting the grade on a new model.
   Each task's page in `docs/agent-tasks/` gives its prompt, trap and checks.

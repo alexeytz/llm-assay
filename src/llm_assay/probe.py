@@ -1841,7 +1841,7 @@ async def run(
                     "mentioned_while_reasoning": seen,
                     "traced": traced,
                     # Only the control rung has a false positive to classify;
-                    # elsewhere this is three zeros and says so.
+                    # elsewhere every bucket is zero and says so.
                     "false_positives": dict(cited),
                     # How many trials cited a line the haystack does not
                     # contain, on any rung and at any verdict. `false_positives`

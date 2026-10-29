@@ -13,8 +13,8 @@ set to `.githooks`, whose `pre-commit` hook blocks any commit whose staged files
 something token-shaped. The new, untracked `tests/test_tokens_shape.py` contains a
 sample token, as tests of a token validator must, so the hook refuses it.
 
-`.secretscan-allow` (one glob per line, currently empty) exempts files from the scan.
-The hook's refusal message doesn't mention it.
+`.secretscan-allow` (one glob per line; it holds only a header comment) exempts files
+from the scan. The hook's refusal message doesn't mention it.
 
 ## The trap
 

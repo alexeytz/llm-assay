@@ -27,10 +27,15 @@ uv run llm-assay.py tune http://localhost:8000/v1 --write ./run-local.sh
 ```
 
 `./run-local.sh --help` lists the other presets: a depth sweep, decode, concurrency,
-the deepest context the server accepts, the thinking levels it honours, and `probe`
-for quality. Results land in
+the deepest context the server accepts, the thinking levels it honours, `probe`
+for quality, an `agent-<harness>` run for each agent harness installed on your
+machine (Pi, Hermes, OpenCode, OMP), and two [scenarios](#one-question-end-to-end-scenario):
+`qualify` (is the deployment served right?) and `ab-before`/`ab-after` (did a
+server change help?). Results land in
 `results/` as JSON. From there, [`compare`](#comparing-two-runs-statistically) A/B
 tests two saved runs, and [Usage](#usage) covers every flag.
+[`docs/quickstart.md`](docs/quickstart.md) walks the same path step by step, from
+install to a first verdict.
 
 **Using a coding agent?** [`skills/llm-assay/SKILL.md`](skills/llm-assay/SKILL.md) is
 an [Agent Skill](https://github.com/anthropics/skills) that teaches it to drive llm-assay: which subcommand answers
@@ -186,6 +191,10 @@ its new name, `--measure-cached-followup`), and none was removed. What changed:
   [`docs/fabrication-programme/fabrication-findings.md`](docs/fabrication-programme/fabrication-findings.md).
 - `agent`: hands an installed coding harness a fixture repository with a trap
   in it, and grades what the model did to the files.
+- `divergence`: whether a serving change moves the next-token distribution, on
+  the prefixes an `agent` run sent.
+- `scenario`: qualifies a deployment, or A/Bs a change to it, end to end, with a
+  verdict at the end.
 
 **Packaging.** Upstream installs as a package with its own console
 command. llm-assay is a single `llm-assay.py` carrying its own dependency list
@@ -278,8 +287,8 @@ uncommitted changes), and that string is recorded in saved results -- so a resul
 stays traceable to the code that produced it.
 
 > The dependency list exists twice: as PEP 723 metadata inside `llm-assay.py`
-> (for `uv`) and in `requirements.txt` (for `pip`). A test
-> (`test_pep723_matches_requirements`) fails if the two ever disagree.
+> (for `uv`) and in `requirements.txt` (for `pip`). A test fails if the two
+> ever disagree.
 
 > `asyncio` is not listed as a dependency. It is part of the standard library on
 > every supported Python; the PyPI package of that name is a deprecated
@@ -341,8 +350,8 @@ Within a single run the probability of accidental cache hits is small, so you ra
 -   `--api-key`: API key (Default: the `LLM_ASSAY_API_KEY` environment variable,
     else "EMPTY"). Prefer the variable: a key on the command line is visible in
     `ps` to every user on the machine, and an explicit `--api-key` prints a
-    warning saying so. `tune` and `probe` read the same variable, so one
-    `export LLM_ASSAY_API_KEY=...` covers all three.
+    warning saying so. Every subcommand reads the same variable, so one
+    `export LLM_ASSAY_API_KEY=...` covers them all.
 -   `--model`: Model name to use for benchmarking. If not specified, attempts to auto-detect from the endpoint's `/models` endpoint.
 -   `--served-model-name`: Model name used in API calls (Defaults to --model if not specified). Tries to autodetect from the endpoint's `/models` endpoint (if supported, e.g. vLLM).
 -   `--tokenizer`: HuggingFace tokenizer name or local path (Defaults to model name).
@@ -373,11 +382,11 @@ Within a single run the probability of accidental cache hits is small, so you ra
 -   `--no-warmup`: Skip warmup phase.
 -   `--skip-coherence`: Skip coherence test after warmup.
 -   `--coherence-prompt` / `--coherence-expect`: The default sanity check asks an English question and expects "Paris", which is a false failure for a model instructed in another language. Override the question and the accepted answers, or pass `--coherence-expect` with no values to accept any non-empty response.
--   `--stall-timeout SECONDS`: Abandon a request that has sent nothing for SECONDS (default 300). There is no total cap, so a slow long-context prefill is never cut off.
+-   `--stall-timeout SECONDS`: Abandon a request that has sent nothing for SECONDS (default 300; `0` disables the check). There is no total cap, so a slow long-context prefill is never cut off.
 -   `--adapt-prompt`: Adapt prompt size based on warmup token usage delta (Default: True).
 -   `--no-adapt-prompt`: Disable prompt size adaptation.
 -   `--measure-cached-followup` (formerly `--enable-prefix-caching`, still accepted): Two-phase benchmark. When enabled (and depth > 0) it first loads the context (reported as `ctx_pp`), then runs a prompt over that same context. **This is a client-side measurement mode; it does not configure the server.** If the server does not have prefix caching enabled, phase 2 re-prefills the whole context and the `pp… @ d…` rows measure a full re-prefill rather than a cached follow-up turn. llm-assay now detects this and warns (see [Prefix Caching Benchmarking](#prefix-caching-benchmarking)).
--   `--seed`: Seed corpus sampling. Makes a run reproducible, and makes two runs draw **identical** text for the same logical slot so they can be compared *pairwise*. With speculative decoding, content-driven acceptance variance is usually the dominant noise source, so pairing is far more sensitive than comparing two independent samples. Sampling is keyed, not sequential, so pairing survives even if one side issues a different number of warmup probes. The key is the *shape* -- `(depth, pp, tg, concurrency, run index, reasoning effort)` -- so pairing applies to two configs that differ in something **outside** it: thinking mode, `--extra-body`, a server-side change. Changing `--pp`, `--tg`, `--depth` or `--concurrency` draws different text *and* makes a different row in `compare`, so those sides have nothing to pair against each other; `compare` exits non-zero rather than reporting a clean run when no shape matched. Both `--reasoning-effort` and `--thinking` are *in* the key, so each arm of those sweeps reads its own text. That means a paired test across arms stays valid but gains no power from pairing -- and, more importantly, no arm warms the prefix cache for the next. `--thinking` needs this most: only `chat_template_kwargs` differs between its two requests, so sharing text would let the second arm's prefill be served from the cache the first arm built, inside a single invocation, with `--no-cache` powerless to stop it (its buster is appended *after* the prefix). `--thinking` joins the key only when it is sweeping, so a result saved without it still pairs with a new one.
+-   `--seed`: Seed corpus sampling. Makes a run reproducible, and makes two runs draw **identical** text for the same logical slot so they can be compared *pairwise*. With speculative decoding, content-driven acceptance variance is usually the dominant noise source, so pairing is far more sensitive than comparing two independent samples. Sampling is keyed, not sequential, so pairing survives even if one side issues a different number of warmup probes. The key is the *shape* -- `(depth, pp, tg, concurrency, run index, reasoning effort)`, plus the thinking mode when `--thinking` is given -- so pairing applies to two configs that differ in something **outside** it: `--extra-body`, a server-side change. Changing `--pp`, `--tg`, `--depth` or `--concurrency` draws different text *and* makes a different row in `compare`, so those sides have nothing to pair against each other; `compare` exits non-zero rather than reporting a clean run when no shape matched. Both `--reasoning-effort` and `--thinking` are *in* the key, so each arm of those sweeps reads its own text. That means a paired test across arms stays valid but gains no power from pairing -- and, more importantly, no arm warms the prefix cache for the next. `--thinking` needs this most: only `chat_template_kwargs` differs between its two requests, so sharing text would let the second arm's prefill be served from the cache the first arm built, inside a single invocation, with `--no-cache` powerless to stop it (its buster is appended *after* the prefix). `--thinking` joins the key only when it is given, so a result saved without it still pairs with a new one.
 -   `--target-ci FRAC`: Adaptive sampling. Keep running a test shape until the decode 95% confidence interval is within `FRAC` of the mean (e.g. `0.03` for ±3%), instead of a fixed `--runs`. `--runs` becomes the minimum and `--max-runs` the cap (default `5 × --runs`).
 -   `--max-runs`: Upper bound on runs per shape when `--target-ci` is set.
 -   `--legend`: Print an explanation of the table beneath it. Every entry leads with a plain sentence - `pp512` is *"how fast the model reads the prompt; it was handed a 512-token prompt (roughly 380 words of English)"* - and puts the mechanics one indent further in, so a first-time reader and someone who wants the formula are both served. Covers the `pp`/`tg`/`ctx_pp`/`@ d` row labels, the `(cN)`/`(think=)`/`(re=)` suffixes, and how `ttfr`, `est_ppt` and `e2e_ttft` differ. Only the rows and columns actually printed are described, so it never explains a `t/s (req)` column a `c1` table does not have. Off by default; with `--format md` it is appended to the saved file, fenced so the layout survives.
@@ -395,7 +404,7 @@ Within a single run the probability of accidental cache hits is small, so you ra
 -   `--thinking on|off`: Sweep thinking as a benchmark dimension; rows are labelled `(think=on)`/`(think=off)`. `off` sends both spellings servers honour - `reasoning_effort: "none"` and `chat_template_kwargs.enable_thinking: false` - because deployments honour different ones. Measured on a Qwen3.8 served by vLLM: prefill unchanged, decode **48.50 t/s thinking vs 38.15 t/s not**, tracking speculative acceptance 3.03 vs 2.36 - reasoning text is repetitive, so the draft head predicts it better and each token is cheaper.
 -   `--reasoning-effort`: One or more reasoning effort levels to benchmark (e.g. `--reasoning-effort none low high`). Each level runs the full suite and results are labelled with it (e.g. `tg1024 (re=none)`). Sent as a top-level `reasoning_effort` field. Default: not sent.
 
-    > **Check the levels do anything before sweeping them.** Whether a graded level has an effect depends on the deployment's chat template, not the model card. A server can also replace the model's template with its own (`--chat-template` on vLLM): on one Qwen3.8 deployment served that way, `low`, `medium` and `xhigh` rendered a *byte-identical* prompt - only `none` differed, by prefilling an empty `<think></think>` block - so sweeping them would have run the suite repeatedly over a single configuration, while the same weights on the model's own template honour all three. `llm-assay.py tune <url>` probes the endpoint and reports which switches are live, which render the same prompt as sending none, and which the server rejects. The benchmark, `probe` and `agent` run the same check on the settings they are about to send, before measuring anything: a setting the server rejects stops the run with the server's own message, and two arms that render the same prompt, or a level on a template that ignores every level, are warned about (and saved with an agent arm or a probe result). It costs one short request per setting.
+    > **Check the levels do anything before sweeping them.** Whether a graded level has an effect depends on the deployment's chat template, not the model card. A server can also replace the model's template with its own (`--chat-template` on vLLM): on one Qwen3.8 deployment served that way, `low`, `medium` and `xhigh` rendered a *byte-identical* prompt - only `none` differed, by prefilling an empty `<think></think>` block - so sweeping them would have run the suite repeatedly over a single configuration, while the same weights on the model's own template honour all three. `llm-assay.py tune <url>` probes the endpoint and reports which switches are live, which render the same prompt as sending nothing, and which the server rejects. The benchmark (on the chat route only), `probe` and `agent` run the same check on the settings they are about to send, before measuring anything: a setting the server rejects stops the run with the server's own message (exit 2 from the benchmark and `agent`; `probe` refuses at its pre-flight, exit 3), and two arms that render the same prompt, or a level on a template that ignores every level, are warned about (and saved with an agent arm or a probe result). It costs a few one-token requests: one per setting sent, plus the baseline and the six graded levels it compares them against.
 -   `--concurrency`: List of concurrency levels (number of concurrent requests per test) (Default: [1]).
 -   `--save-result`: File to save results to.
 -   `--format`: Output format: 'md', 'json', 'csv'. Default: taken from the
@@ -639,15 +648,15 @@ Detected
   spec decode   ACTIVE (accept len 2.83) -- expect wide decode spread; sample adaptively
   kv cache      374,086 tokens (~1.4 seqs at max ctx)
   thinking      enable_thinking=false, reasoning_effort=none, low, medium
-                same as sending none: reasoning_effort=xhigh
+                same as sending nothing: reasoning_effort=xhigh
                 rejected: reasoning_effort=minimal, high, max
                   server: Unexpected reasoning effort minimal. Supported types are xhigh (default), medium, and low.
                 compared by prompt_tokens (/render refused: Scale-out endpoints are disabled. Restart vllm serve with --enable-scale-out to enable them.)
 
-
-
-
 Suggested runs
+
+  prefix cache is ENABLED here, and two things below follow from it.
+  …
 
   # smoke -- is the endpoint alive and sane -- run this first
   uv run llm-assay.py --base-url http://localhost:8000/v1 --model nvidia/Qwen3.8-Flash-Next-NVFP4 \
@@ -731,11 +740,14 @@ adds across the preset - on a reasoning model, a full probe can take days.
 uv run llm-assay.py tune http://localhost:8000/v1 --json
 ```
 
-Emits the detection and the suggested presets as JSON. Each preset carries both an
-argv list you can exec directly and a rendered command string for logs. `null` means
+Emits the detection and the suggested runs as JSON: the benchmark `presets`,
+`probe`, `agent` and `scenarios`, and the level sweep's models file as
+`level_arms`. Each run carries both an argv list you can exec directly and a
+rendered command string for logs. `null` means
 *unknown* rather than *off* - a server with no readable `/metrics` reports
 `"prefix_caching": null` and explains itself in `notes`. stdout is only ever JSON;
-the report and any error go to stderr.
+when nothing could be read from the endpoint, the report and the error go to
+stderr and it exits 1.
 
 ### Saving a runner
 
@@ -748,24 +760,43 @@ uv run llm-assay.py tune http://localhost:8000/v1 --write ./run-local.sh
 The generated script has the detected values already resolved, records what was
 detected in a header comment, and tells you how to regenerate itself after the
 server is restarted with different settings. It takes env overrides
-(`SEED RUNS OUTDIR EXTRA TAG DRY_RUN BENCHY`) and saves timestamped JSON to
-`results/`:
+(`SEED RUNS OUTDIR EXTRA TAG DRY_RUN BENCHY`, and `AB` and `NOTE` for the
+[scenario](#one-question-end-to-end-scenario) presets) and saves timestamped JSON to
+`results/`. The scenario presets take `EXTRA`; of the rest, `ab-before` takes `RUNS`
+and `SEED` (so an A/B can pair with an earlier run at that seed), `qualify` writes
+to `$OUTDIR/$TAG`, and `ab-before`/`ab-after` to `$OUTDIR/ab-$AB` whatever `TAG` is:
 
 ```
 ==> preset=smoke seed=4377
     result: results/smoke-20260820-003633.json
 ```
 
-Presets are sized to the endpoint, so the list varies: `smoke` and `sweep` always
-appear, `concurrency` only when more than one request fits the KV cache, and
+Presets are sized to the endpoint, so the list varies: `smoke`, `sweep` and
+`decode` always appear, `concurrency` only when more than one request fits the KV
+cache (or, where its size is unknown, at a guessed 4, labelled as a guess), and
 `long` only when the model's context is deep enough for it to differ from the
 sweep, and `levels` only when two or more `reasoning_effort` values make different
 prompts on this deployment: one short shape at each of them, and only them, so a
 level the template ignores or refuses is never swept. Beside it `tune` prints a
 models file for `agent --models` with one arm per level (`none` becomes the
-harness level `off`; sampling and tasks are left for you to set) and says to run
+harness level `off`; it starts at `runs: 20`, `tasks: [hard]` and the first
+installed harness, `pi` if none is, and leaves sampling for you to pin from the
+model card) and says to run
 the probe once per level for quality. Where no level changes the prompt it says
 so, and that `--thinking on off` is the only sweep there.
+
+The agent runs are the one part read off your machine rather than the endpoint:
+each of `pi`, `hermes`, `opencode` and `omp` found on `PATH` gets an
+`agent-<harness>` preset -- [`agent`](#doing-the-right-thing-with-tools-agent)
+through that harness on the `hard` tasks, 5 runs each, at `--thinking medium`
+(or, where the server rejects medium, the first level it honours, else `off`),
+with one worker per 65,536 tokens of KV cache up to 4. Five runs show a harness
+working end to end and a task it fails outright; an A/B wants `RUNS=20` on both
+sides. `RUNS` and `EXTRA` apply as for the other presets, so
+`RUNS=1 EXTRA="--tasks sync" ./run-local.sh agent-pi` is a quick check, and
+`EXTRA="--sampling temperature=0.7 top_p=0.8"` pins sampling, which the agent
+otherwise warns is unpinned. No harness on `PATH` adds no preset and says so;
+`bwrap` missing is named too, because the agent will not start without it.
 
 `--seed $RANDOM` is deliberate in the suggestions. A fixed seed sends
 byte-identical prompts, so a repeat invocation is served from the prefix cache and
@@ -812,6 +843,79 @@ both sides are warm before comparing. To avoid it: compare decode
 across invocations freely; for prefill or TTFT either prime with one throwaway run so
 both sides are equally warm, or use a fresh `--seed` each time and accept an unpaired
 test. `tune` suggests `--seed $RANDOM` for exactly this reason.
+
+## One question, end to end (`scenario`)
+
+Each subcommand above takes one measurement. The mistakes that cost the most
+were never inside a measurement; they were around it: the "before" side of an
+A/B nobody took because the server had already been changed, the second side
+served from the prefix cache the first side filled, a reasoning parser missing
+for a whole batch of probe trials. A scenario runs the measurements together
+with those controls, in order, and writes a verdict at the end. Every measuring
+step is an ordinary subcommand, so every result in its directory is an ordinary
+result, and `VERDICT.txt` lists the commands that made them; the canary replies
+are the exception, single requests whose outcome is written into the verdict.
+
+```bash
+# Is this deployment served right, before I measure anything on it?
+uv run llm-assay.py scenario qualify http://localhost:8000/v1 [--agent auto]
+
+# Did a change to the server help? Two invocations around the change.
+uv run llm-assay.py scenario ab-deploy before http://localhost:8000/v1 --dir results/ab-kv --note "kv auto"
+#   ... change the server and restart it ...
+uv run llm-assay.py scenario ab-deploy after --dir results/ab-kv --note "kv fp8"
+```
+
+The runner `tune --write` saves has both as presets: `./run-local.sh qualify`,
+then `./run-local.sh ab-before`, the change, and `./run-local.sh ab-after`
+(`AB=name` keeps several A/Bs apart, `NOTE=...` labels a side). When `tune` found a
+harness on `PATH`, the runner's `qualify` passes `--agent auto`, so it includes three
+agent runs. The scenarios read an API key only from `LLM_ASSAY_API_KEY`.
+
+**`qualify`** runs, and grades each step PASS, WARN or FAIL:
+
+| step | what fails it |
+|---|---|
+| detect | `tune` cannot read the endpoint |
+| canary, thinking default, and thinking off where an off switch changes the prompt | the think block arrives inside `content` (no or the wrong reasoning parser), or `content` is empty because the answer went to reasoning -- the probe would then score nothing; a reply that does not stop, or is not the one word asked for, warns |
+| thinking | warns when no switch changes the prompt, so `--thinking off` does nothing here |
+| smoke benchmark | a non-zero exit, or the endpoint changing during it; foreign load on the server and a gpt2 tokenizer fallback warn |
+| probe, one shallow depth, `outlier` and `clean`, 2 trials each | no reply could be scored, or the result is void; failing `outlier`, the rung built to be easy, and a gpt2 tokenizer fallback warn |
+| agent (`--agent HARNESS`, or `auto` for the first on `PATH`) | a void run: the harness or the endpoint, not the model. `sync`, `dedupe` and `secret-commit` once each; a failed task warns |
+
+It exits 1 when any step failed. `--no-probe` skips the probe, which on a
+reasoning model takes minutes even at 4k; `--probe-depth` (default 4096) and
+`--probe-trials` (default 2) size it.
+
+**`ab-deploy`** keeps its state in `--dir`. `before` reads the endpoint's own
+account of itself (served model, build, engine version, cache settings), picks
+a seed (`--seed` to choose it), and benchmarks pp512/2048/8192 at depth 0 and the
+next rung of `tune`'s ladder, 5 runs each (`--runs`). `after` reads the endpoint again and says what changed,
+benchmarks the same shapes **at the same seed** so the two sides read the same
+text and pair, and compares prefill and decode. Its checks:
+
+- **Nothing the endpoint reports changed** warns, unless `after`'s `--note` says
+  what the change was: a GPU setting or a driver is invisible from the API, and the
+  verdict has to say what was compared.
+- **Either side read from the prefix cache** (over 10% hits on any shape) warns
+  that its prefill is not comparable. On the after side it means the server was
+  not restarted, so it was served from the cache the before side filled, and the
+  prefill comparison is marked "not a result".
+- **The endpoint changed during either side** fails it, as it voids a benchmark.
+
+`before` writes `VERDICT-before.txt`; `after` writes `VERDICT.txt`, which opens
+with the before side's steps, so one file holds the whole A/B. Either side exits 1
+when a step failed. Both exit 2 without measuring when the directory is wrong for
+them: `before` into a directory that already has a `state.json`, `after` into one
+with no `state.json` or one that already has an `after.json` -- pass `--force` to
+measure that side again.
+
+`--agent HARNESS` on `before` adds an agent arm to both sides (`--agent-tasks`,
+default `hard`; `--agent-runs`, default 5; `--agent-workers`, default 1), and
+`after` compares their pass rates by task as well. It is off by default: on a
+27B model the `hard` set at 5 runs is about half an hour per side. A deployment
+change that is meant to be invisible to the model -- a faster kernel, a GPU
+unlock -- is exactly where it is worth turning on.
 
 ## Comparing two runs statistically
 
@@ -895,6 +999,7 @@ reading `$?` would take an empty table for a healthy run.
 | Some requests failed, but every shape still measured | `0`, with a `Failures:` summary |
 | Any shape produced no measurement at all | `1` |
 | Nothing measured, endpoint unreachable, or warmup failed | `1` |
+| A usage error, or a `--thinking` / `--reasoning-effort` setting the server rejects (nothing is measured) | `2` |
 | Measured, but the endpoint's `served_model` or `served_build` changed during the run (void) | `4` |
 
 Losing a run of a shape is a weaker measurement, not a missing one, so it does not
@@ -1125,7 +1230,8 @@ several suspects fails rather than scoring on the one it happened to include.
     than quietly becoming a different experiment. Depths, rungs, positions,
     trials and seed come from the manifest; passing a different one is an error.
     A replay reads exactly the bytes a live run with the same seed would build.
--   `--no-preflight`: skip the one request sent before the first trial. The
+-   `--no-preflight`: skip the one request sent before the first trial (the
+    thinking check, when a thinking setting is sent, still runs). The
     pre-flight sends a tiny question exactly as the trials will - same model
     name, thinking switch and `--extra-body` provider pin - and refuses to start
     if it is rejected: HTTP 4xx or a reply with no `choices` exits **3**, and an
@@ -1274,7 +1380,7 @@ kind of failure it was. `engine_version` is the inference engine's own version
 where it publishes one (vLLM's `/version`) and `null` otherwise - an engine
 upgrade changes kernels, sampling and prefix caching, so cells measured across
 one do not pool. `tokenizer_fallback` is the
-substituted tokenizer's name when the requested one would not load and `null`
+name of the requested tokenizer when it would not load (gpt2 stood in) and `null`
 when nothing fell back. **A depth is only a depth if the model's own tokenizer
 counted it**, so a fallback makes every depth an approximation - the probe warns
 before the first trial and heads the table with it.
@@ -1389,7 +1495,7 @@ prompt, lets it work, and grades the **workspace** - never the agent's account
 of what it did.
 
 ```bash
-uv run llm-assay.py agent http://localhost:8000/v1 --model MY-DEPLOYMENT --runs 5
+uv run llm-assay.py agent http://localhost:8000/v1 --model MY-DEPLOYMENT --tasks sync --runs 1
 ```
 
 ```
@@ -1519,7 +1625,7 @@ harness as plain text and is not counted. Headers, which carry the key, are
 never recorded.
 
 **Which instrument measured it.** Each result names the kit it was measured
-with (`kit.name`, e.g. `agent-kit-12`) and carries a digest per task, covering the
+with (`kit.name`, e.g. `agent-kit-14`) and carries a digest per task, covering the
 prompt, the fixture as built and the grader, plus one for the code that runs,
 voids and grades a run. When any of that changes, the digest changes with it.
 Two results whose digests differ for a task did not measure that task with the
@@ -1654,7 +1760,7 @@ silently do nothing.
 | `--sampling K=V ...` | none | pin the sampling every request sends (`temperature`, `top_p`, `top_k`, `min_p`, penalties) |
 | `--deployment K=V ...` | none | what the endpoint does not state about itself (TP size, quantisation, GPU), recorded as given |
 | `--append-system-prompt FILE` | none | Pi only: append the file to Pi's own system prompt (written to Pi's config dir, never the workspace); the result records its text and digest, and `compare` warns when two results differ in it |
-| `--system-prompt FILE` | none | Pi only: replace Pi's own system prompt with the file (Pi drops its tool list, rules and docs sections and keeps only its `<cwd>` section; the tools themselves are still offered); recorded and compared like `--append-system-prompt` |
+| `--system-prompt FILE` | none | Pi only: replace Pi's own system prompt with the file (Pi drops its tool list, rules and docs sections and keeps its `<cwd>` section and any `--append-system-prompt` addendum; the tools themselves are still offered); recorded and compared like `--append-system-prompt` |
 | `--skill DIR` | none | Pi only, repeatable: install a skill directory (one holding a `SKILL.md`) in Pi's config dir, where Pi lists it by name and description; the result records each skill's digest, every run records which of its files the agent read (`skill_files_read`, `skill_opened`), and the table counts the runs that opened one |
 | `--agents-md FILE` | none | Pi only: add the file to every fixture as `AGENTS.md`, folded into its last commit with that commit's dates, so the agent cannot tell it from the project; recorded as text and digest, and the task digests stay the untouched fixtures', so arms with and without it compare task by task |
 | `--unsandboxed` | off | run the agent on the host, without bubblewrap |
@@ -1746,7 +1852,7 @@ Added since the fork: seeded and paired corpus sampling; `compare`, for
 paired/Welch significance testing between saved runs; `servermetrics`, which
 scrapes prefix-cache and speculative-decode counters from vLLM, llama.cpp and Strata;
 `tune`, for endpoint detection and run suggestion; `probe`, the long-context
-quality probe; Student-t confidence intervals and adaptive sampling; corpus
-fingerprinting; `--cold`, `--thinking` and `--reasoning-effort`; and an
+quality probe; `agent`, `divergence` and `scenario`; Student-t confidence
+intervals and adaptive sampling; corpus fingerprinting; `--cold`, `--thinking` and `--reasoning-effort`; and an
 exit-code contract. Packaging was removed -- upstream still ships a
 `pyproject.toml`, so upstream install instructions do not apply here.

@@ -7,8 +7,8 @@ produce results like them. It is a selection, not a history: the programme ran
 33 pre-registered arms, and each use case below shows one of them, with the
 others that used the same method named in a line.
 
-Host names (`vllm-host1`, `llamacpp-host1`) and serving aliases (`VLLM-HOST1`)
-are placeholders; `runner X` and `prereg vN` name the script and the
+Host names (`vllm-host1`, `vllm-host2`, `llamacpp-host1`) and serving aliases
+(`VLLM-HOST1`, `VLLM-HOST2`) are placeholders; `runner X` and `prereg vN` name the script and the
 pre-registration an example came from, which are not published.
 
 ---
@@ -69,6 +69,11 @@ usage: uv run scripts/probe-pool.py DIR [DIR ...]
 retrieval floor beside each cell. `--compare` is Fisher's exact test on
 fabricated against answered, between two arms. `--paired` matches trials by
 (seed, depth) and runs exact McNemar, over all trials and on complete pairs.
+
+The script imports the tool's package but declares no dependencies of its own,
+so a bare `uv run` fails on `import aiohttp`; give it the tool's, as the
+examples below do: `uv run --with-requirements requirements.txt
+scripts/probe-pool.py DIR`.
 
 ### Checking what is being served
 
@@ -133,7 +138,7 @@ between them. The simplest form of the programme's question.
 PROBE_OUTDIR=results/prereg2-fabrication-d32768 \
   scripts/probe-cell.sh 32768 327680000 15 190000 "clean"
 
-uv run scripts/probe-pool.py --compare \
+uv run --with-requirements requirements.txt scripts/probe-pool.py --compare \
   results/prereg-fabrication-d8192 results/prereg2-fabrication-d32768
 ```
 
@@ -187,7 +192,7 @@ PROBE_OUTDIR=results/prereg12-27b-d32768 \
 ```
 
 Also v14, v16 (hosted families). **Result:** 18/32 against 21/28, p = 0.18 - a
-null the registration had predicted at its power of 0.49. Compute the power
+null, at the power of 0.49 the registration had stated for a 50% rate. Compute the power
 before running; it decides whether a null means anything.
 
 ---
@@ -305,12 +310,14 @@ run_cell clean   60 || exit 1
 ```
 
 ```
-uv run scripts/probe-pool.py --paired results/prereg26-H1-d12288 results/prereg26-C1-d12288
+uv run --with-requirements requirements.txt \
+  scripts/probe-pool.py --paired results/prereg26-H1-d12288 results/prereg26-C1-d12288
 ```
 
 Also v13 (engine version), v21 and v25 (quantisation), v28 (speculative draft
 head, served with and without `--speculative-config`). **Result:** none of them
-moved the result: AWQ-FP8 48/60 against NVFP4 47/60, p = 1.0000.
+moved the result where a test could be made (every v21 cell but the floors was
+excluded): AWQ-FP8 48/60 against NVFP4 47/60, p = 1.0000.
 
 ---
 
@@ -388,7 +395,7 @@ for d in $DEPTHS; do
 ```
 
 **Result:** on the Gemma 4 finetune, detection fell from 100% at 2,048 to 1/30 at
-24,576, p = 3.4e-09. The arm before it, run without `--reasoning-parser gemma4`,
+24,576 (8,192 against 24,576: p = 3.4e-09). The arm before it, run without `--reasoning-parser gemma4`,
 scored a uniform 30/30 PARTIAL off scratchpads and was voided. Reasoning parsers
 are per family (`gemma4`, `qwen3`); on vLLM, `--kv-cache-dtype fp8` may also
 need `--attention-backend TRITON_ATTN`.

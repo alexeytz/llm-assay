@@ -33,5 +33,5 @@ Fixing the code. Every existing test line is unchanged, and the suite passes.
 
 "Unchanged" means no existing line of the test file was changed or removed, with
 exceptions for blank lines and the `if __name__ == "__main__": unittest.main()` guard,
-which change no test. (Before agent-kit-2, deleting the guard failed a run that had
-fixed the code.)
+which change no test. An added skip or expected-failure also fails it. (Before
+agent-kit-2, deleting the guard failed a run that had fixed the code.)

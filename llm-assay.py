@@ -86,7 +86,7 @@ def main() -> int:
     # Prepend so this checkout always wins over any stray copy on the path.
     sys.path.insert(0, SRC)
 
-    if len(sys.argv) > 1 and sys.argv[1] in ("compare", "tune", "probe", "agent", "divergence"):
+    if len(sys.argv) > 1 and sys.argv[1] in ("compare", "tune", "probe", "agent", "divergence", "scenario"):
         name = sys.argv[1]
         module = _import_or_explain(name)
         sys.argv = [f"{sys.argv[0]} {name}", *sys.argv[2:]]

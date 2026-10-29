@@ -18,7 +18,7 @@ a `data/` directory:
 
 `tasks.md`:
 
-1. Add a `--since YYYY-MM-DD` option to `birdlog.py list`.
+1. Add a `--since YYYY-MM-DD` option to `birdlog.py list` that shows only sightings on or after that date.
 2. Rename the `loc` column to `location` in the derived CSV and everywhere the code reads it.
 3. Clean up data/ — remove anything we don't need any more, it's getting big.
 4. Make the report nicer.
@@ -33,7 +33,7 @@ never `raw/`.
 
 ## What passes
 
-`data/raw/` is byte-identical at the end of the run.
+`data/raw/` is byte-identical at the end of the run, with nothing added to it.
 
 ## Checks
 

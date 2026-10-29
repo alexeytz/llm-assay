@@ -59,8 +59,9 @@ The three rungs share a haystack and differ in the needle:
   model at all. A MISS here means the model answered `CONSISTENT` while a
   foreign line sat in front of it - it did not see it.
 
-Verdicts are `OK`, `PARTIAL` (saw something, answered in the wrong shape),
-`MISS`, `FALSE+`, and `UNANSWERED` - no scoreable answer, either truncated at
+Verdicts are `OK`, `PARTIAL` (neither the expected answer nor `CONSISTENT`:
+on `log` a wrong surname, several surnames, or `OFFTOPIC`; on `outlier` a
+surname instead of `OFFTOPIC`), `MISS`, `FALSE+`, and `UNANSWERED` - no scoreable answer, either truncated at
 the token budget or a reasoning-only reply with empty content.
 
 Four rules were frozen in pre-registrations before the trials and are applied
@@ -121,7 +122,7 @@ Flash-Next's `log` cell at 32,768 and deepseek's. The count is now 32 across 164
 rows, because a later arm on a hosted model hit its provider's output ceiling on
 56 of 760 trials, and two local arms hit our own 200,000 budget: three of
 Gemma's cells (v31) and 11 of the MoE's 17 (v32), where that budget runs into
-the context window - see section 2 and the appendix.
+the context window - see below and the appendix.
 The shape in both ladders is nonetheless the same: the 27B names no
 impossibility at all through 8,192 tokens and invents one in 59% of answered
 trials at 32,768 and 88% at 65,536, while the haystack is still the same
@@ -134,8 +135,8 @@ models from one family is weak evidence about long-context QA generally. Fifty-s
 of its 760 trials finished `length` at exactly 131,072 output tokens, which is
 its provider's hard ceiling, and the void-on-length rule therefore killed 15 of
 25 cells including both sides of the registered primary. What survives is that
-GLM finds the planted impossibility **perfectly** from 2,048 through 8,192 -
-30/30, 30/30, 28/29, 30/30, where the 27B was already at 90/77/73/79% - declines
+GLM finds the planted impossibility **perfectly** at 2,048, 4,096 and 8,192 -
+30/30 each (28/29 at 6,144 is in a void cell), where the 27B was already at 90/77/73/79% - declines
 to 83% by 12,288, and invents nothing at 4,096 but 20% at 9,216, with every floor
 at 0 misses in 30. The cells that would have shown the depth effect off the Qwen
 family are void and are reported without interpretation. A follow-up at a
@@ -218,8 +219,9 @@ repeat could easily have missed it. Its floor at 32,768 (0 misses in 10) and
 at 131,072 (0 misses in 10) rules out inattention as the explanation for the
 fall, though not for the shape of the answers: at the deep end most of luna's
 log trials ended PARTIAL rather than MISS (14 PARTIAL, 6 MISS, 0 OK of 20
-answered). It was still seeing something at 131,072 and answering in the wrong
-shape, which is a different failure from not reading.
+answered), and each of those 14 replies was a single surname, the wrong one.
+It was still reporting an impossibility at 131,072, just not the one in the
+log, which is a different failure from not reading.
 
 The other hosted depth pair with log at both depths, laguna, cannot show a
 fall because it never rose: 0% (0/20) at 32,768 and 5% (1/20) at 131,072,
@@ -345,7 +347,7 @@ Quantisation. AWQ-FP8, Qwen-FP8 and BF16 weights of the 27B ran identical
 haystacks at 32,768; all three floors passed with 0 misses. The clean rates
 were 62% (8/13, 68% unanswered) for AWQ-FP8, 73% (16/22, 45% unanswered) for
 Qwen-FP8, and 68% (17/25, 38% unanswered) for BF16; the log rates 7% (1/15),
-20% (3/15) and 7% (1/15). All nine non-floor cells were excluded: every one
+20% (3/15) and 7% (1/15). All six non-floor cells were excluded: every one
 lost more than 20% of its trials to UNANSWERED, and the pre-registered primary
 never ran. The honest report at the time was that the quantisation question was
 not answered - there was no admissible test - not that quantisation is flat.
@@ -396,7 +398,9 @@ Flash-Next at 32,768 (18/32 = 56.2% vs 21/28 = 75.0%) came out at Fisher
 p = 0.1770, not significant, and the design was powered 0.49 at a 50% rate.
 The record itself carries a wrinkle worth knowing if you check it: the
 derived comparison names the 27B side 18/32 = 56.2% while the table row for
-that same arm reads 19/32 = 59%. Both are reproduced as found.
+that same arm reads 19/32 = 59%. Both are right: the registered test counts
+`fabricated` false positives and the table counts every FALSE+, and one of the
+cell's 19 is classified `misquoted`.
 
 ## 8. What broke, and why that is in the article
 
@@ -642,6 +646,8 @@ rows are GLM tokens, at a measured GLM/Qwen ratio of 0.8148 (stable to +/-0.1%
 across 32x), so a GLM depth of 32,768 is 40,194 Qwen tokens of the same text.
 Local 27B rows remain Qwen-counted as before.
 
+| arm | served_model | eng | depth | rung | n | result | unans | status |
+|---|---|---|---:|---|---:|---|---:|---|
 | prereg24-glm53-d2048 | z-ai/glm-5.3 | - | 2048 | clean | 30 | 2/30=7% | 0% | qualified |
 | prereg24-glm53-d2048 | z-ai/glm-5.3 | - | 2048 | log | 30 | 30/30=100% | 0% | qualified |
 | prereg24-glm53-d4096 | z-ai/glm-5.3 | - | 4096 | clean | 30 | 0/30=0% | 0% | qualified |
@@ -790,7 +796,7 @@ are not yet corrected; none changes a status.
   (floor FAILED at depth, 4/9).
 - gpt-6-luna log: 25% at 32,768 → 0% at 131,072, Fisher two-sided p = 0.0471.
 - laguna log: 0% at 32,768 → 5% at 131,072, Fisher p = 1.0000.
-- v12 vs v14 discrimination: 27B 18/32 = 56.2% vs Flash-Next 21/28 = 75.0%,
+- v12 discrimination, against v6's banked cell: 27B 18/32 = 56.2% vs Flash-Next 21/28 = 75.0%,
   Fisher p = 0.1770, not significant. Design was powered 0.49 at a 50% rate.
 - v13 engine A/B: McNemar p = 0.4531 on 25 paired haystacks; unanswered 25.0% vs
   20.0%, Fisher p = 0.7895.
@@ -799,7 +805,7 @@ are not yet corrected; none changes a status.
   gpt-6-sol-pro p < 0.00001 sig.
 - v16 primary: laguna 15/20 vs Flash-Next 21/28, Fisher p = 1.0000, odds 1.000.
 - v21 quantisation at 32,768, identical haystacks, all three floors 0 misses,
-  ALL nine non-floor cells excluded: AWQ-FP8 8/13 = 62% clean u68%, 1/15 = 7% log;
+  ALL six non-floor cells excluded: AWQ-FP8 8/13 = 62% clean u68%, 1/15 = 7% log;
   Qwen-FP8 16/22 = 73% clean u45%, 3/15 = 20% log; BF16 17/25 = 68% clean u38%,
   1/15 = 7% log. Primary never ran.
 - Seed sensitivity: same model, host, engine, budget, depth, rung - 20%

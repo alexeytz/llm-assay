@@ -24,6 +24,9 @@ Usage::
 
     python llm-assay.py tune http://localhost:8000/v1
     python llm-assay.py tune http://localhost:8000/v1 --write ./run-local.sh
+
+The agent harnesses are the one thing read off this machine rather than the
+endpoint: each one found on PATH gets an ``agent-<harness>`` run.
 """
 
 from __future__ import annotations
@@ -34,6 +37,7 @@ import math
 import os
 import time
 import re
+import shutil
 import stat
 import sys
 from typing import Any, Dict, List, Optional, Tuple
@@ -97,6 +101,12 @@ class Detected:
         self.spec_decode: Optional[bool] = None
         self.spec_acceptance_length: Optional[float] = None
         self.thinking: Optional[ThinkingProbe] = None
+        #: Agent harnesses installed on this machine (``installed_harnesses``),
+        #: each of which gets an agent run. Set by ``main``, not ``detect``:
+        #: it is a fact about the caller's PATH, not the endpoint.
+        self.harnesses: List[str] = []
+        #: Whether bwrap is on PATH: the agent sandboxes every run with it.
+        self.sandbox: bool = True
         self.notes: List[str] = []
 
     @property
@@ -882,7 +892,7 @@ def report(found: Detected) -> str:
               for state in THINKING_STATES}
         row("thinking", by["live"] or "no switch changes the prompt")
         if by["same"]:
-            lines.append(f"  {'':<14}same as sending none: {by['same']}")
+            lines.append(f"  {'':<14}same as sending nothing: {by['same']}")
         if by["rejected"]:
             lines.append(f"  {'':<14}rejected: {by['rejected']}")
             lines.append(f"  {'':<14}  server: {found.thinking.rejection}")
@@ -988,7 +998,10 @@ def build_presets(found: Detected) -> List[Tuple[str, str, List[str]]]:
     if len(conc) > 1:
         presets.append((
             "concurrency",
-            f"throughput under load; {conc[-1]} concurrent requests fit this KV cache at d{deep}",
+            (f"throughput under load; {conc[-1]} concurrent requests fit this KV cache at d{deep}"
+             if found.kv_cache_tokens else
+             f"throughput under load at d{deep}; the KV cache size is unknown, so {conc[-1]} "
+             "is a guess -- watch for queued requests"),
             ["--pp", "2048", "--tg", "256", "--exact-tg", "--depth", str(deep),
              "--runs", "3", "--concurrency", *[str(c) for c in conc], *cached],
         ))
@@ -1192,6 +1205,110 @@ def _probe_command(found: Detected, args: List[str],
     return _wrap(tokens, "  ")
 
 
+#: The harnesses ``agent`` drives, by the executable each one installs.
+AGENT_HARNESSES = ("pi", "hermes", "opencode", "omp")
+
+#: A worker per this many tokens of KV cache: an agent run's context grows to
+#: tens of thousands of tokens, and runs that do not fit are preempted, which
+#: changed pass rates before. Capped, because the endpoint is shared by the runs.
+_AGENT_TOKENS_PER_WORKER = 65536
+_AGENT_MAX_WORKERS = 4
+
+
+def installed_harnesses() -> List[str]:
+    """The agent harnesses on PATH, in ``AGENT_HARNESSES`` order."""
+    return [name for name in AGENT_HARNESSES if shutil.which(name)]
+
+
+def agent_workers(found: Detected) -> int:
+    if not found.kv_cache_tokens:
+        return 1
+    return max(1, min(_AGENT_MAX_WORKERS, found.kv_cache_tokens // _AGENT_TOKENS_PER_WORKER))
+
+
+def agent_thinking(found: Detected) -> str:
+    """The agent's level: its default, medium, unless this server rejects it.
+
+    The agent refuses to start on a rejected setting, so suggesting one would
+    be a run that cannot begin. Then the first level that does change the
+    prompt, and failing that off.
+    """
+    controls = found.thinking.controls if found.thinking else {}
+    if controls.get("reasoning_effort=medium") != "rejected":
+        return "medium"
+    graded = [level for level in (found.thinking.levels if found.thinking else [])
+              if level != "none"]
+    return graded[0] if graded else "off"
+
+
+def agent_presets(found: Detected) -> List[Tuple[str, str, List[str]]]:
+    """(key, description, argv) for one agent run per installed harness.
+
+    The `hard` tasks, the agent's default, at 5 runs: enough to see a harness
+    work end to end and to spot a task it fails outright, not to tell two
+    configurations apart -- the README's A/Bs use 20. Sampling stays unpinned,
+    which the agent warns about: the model card's values are not on the
+    endpoint, so pinning them is the operator's call (``--sampling``).
+    """
+    if not found.served_model:
+        return []
+    workers, thinking = agent_workers(found), agent_thinking(found)
+    out = []
+    for harness in found.harnesses:
+        out.append((
+            f"agent-{harness}",
+            f"the agent suite through {harness}: the hard tasks, 5 runs each, "
+            f"{workers} worker{'s' if workers > 1 else ''}, thinking {thinking}",
+            ["agent", found.base_url, "--model", found.served_model, "--harness", harness,
+             "--tasks", "hard", "--runs", "5", "--workers", str(workers),
+             "--thinking", thinking],
+        ))
+    return out
+
+
+def _agent_command(args: List[str], runner: str = "uv run llm-assay.py") -> List[str]:
+    return _wrap(runner.split() + [_quote(a) for a in args], "  ")
+
+
+def _agent_notes(found: Detected) -> List[str]:
+    if not found.harnesses:
+        return [
+            "  Agent suite: no harness found on PATH (" + ", ".join(AGENT_HARNESSES) + ").\n"
+            "  Install one and re-run tune to get an agent-<harness> run, which hands\n"
+            "  the model a repository through that harness and grades what it did."]
+    notes = [
+        "  Agent suite: the agent runs above grade the workspace a harness leaves,\n"
+        "  not the reply. Each costs minutes per run; an A/B wants --runs 20 on both\n"
+        "  sides and the same --workers, then `compare` on the two results."]
+    if found.served_model and agent_thinking(found) != "medium":
+        notes.append(
+            f"  --thinking {agent_thinking(found)} because this server rejects medium, the\n"
+            "  agent's default.")
+    if not found.sandbox:
+        notes.append(
+            "  bwrap is not on PATH: the agent runs every harness inside it and will\n"
+            "  refuse to start. Install bubblewrap (on Ubuntu, see the README's note on\n"
+            "  AppArmor) rather than passing --unsandboxed.")
+    return notes
+
+
+def scenario_presets(found: Detected) -> List[Tuple[str, str, List[str]]]:
+    """(key, description, argv) for the scenario runs: qualify the deployment,
+    and the two halves of an A/B around a change to it. The A/B's directory is
+    the runner's ``$AB`` (default ``deploy``) under ``$OUTDIR``, so ``ab-after``
+    finds what ``ab-before`` kept there."""
+    harness = ["--agent", "auto"] if found.harnesses else []
+    return [
+        ("qualify", "is this deployment served right? canary, thinking, smoke, a short probe"
+                    + (", 3 agent runs" if harness else ""),
+         ["scenario", "qualify", found.base_url, *harness]),
+        ("ab-before", "A/B a server change, part 1: record the endpoint and measure it",
+         ["scenario", "ab-deploy", "before", found.base_url]),
+        ("ab-after", "A/B a server change, part 2, after changing it: measure and compare",
+         ["scenario", "ab-deploy", "after"]),
+    ]
+
+
 def level_arms(found: Detected) -> List[str]:
     """A models file for ``agent --models``: one arm per level a sweep should run.
 
@@ -1203,8 +1320,8 @@ def level_arms(found: Detected) -> List[str]:
     if len(levels) < 2 or not found.served_model:
         return []
     out = ["# One agent arm per thinking level this endpoint renders differently. Pin",
-           "# sampling (the model card's values) and choose the tasks before running.",
-           "defaults: {runs: 20, harness: pi, tasks: [hard]}",
+           "# sampling (the model card's values); the tasks start at the hard set.",
+           f"defaults: {{runs: 20, harness: {(found.harnesses or ['pi'])[0]}, tasks: [hard]}}",
            "models:"]
     for level in levels:
         thinking = "off" if level == "none" else level
@@ -1233,6 +1350,13 @@ def suggestions(found: Detected) -> str:
     lines.append(_probe_budget_note(found, args))
     lines.append("")
     for note in _probe_notes(found, args):
+        lines.append(note)
+        lines.append("")
+    for key, description, argv in agent_presets(found):
+        lines.append(f"  # {key} -- {description}")
+        lines.extend(_agent_command(argv))
+        lines.append("")
+    for note in _agent_notes(found):
         lines.append(note)
         lines.append("")
     levels = found.thinking.levels if found.thinking else []
@@ -1313,9 +1437,22 @@ def as_dict(found: Detected) -> Dict[str, Any]:
                              *(_quote(a) for a in probe_argv)]),
     }
 
+    agent = [{"key": key, "description": description, "args": argv,
+              "command": " ".join(["uv", "run", "llm-assay.py", *(_quote(a) for a in argv)])}
+             for key, description, argv in agent_presets(found)]
+
     return {
         "endpoint": found.base_url,
         "probe": probe,
+        "agent": agent,
+        "harnesses": list(found.harnesses),
+        "scenarios": [{"key": key, "description": description, "args": argv,
+                       "command": " ".join(["uv", "run", "llm-assay.py",
+                                            *(_quote(a) for a in argv)])}
+                      for key, description, argv in scenario_presets(found)],
+        # The models file the text output prints for a level sweep, one line per
+        # entry; empty when fewer than two levels make different prompts.
+        "level_arms": level_arms(found),
         "detected": {
             "served_model": found.served_model,
             "hf_model": found.hf_model,
@@ -1342,10 +1479,13 @@ def as_dict(found: Detected) -> Dict[str, Any]:
 
 def runner_keys(found: Detected) -> List[str]:
     """Every preset the written runner offers, in its order: the benchmark
-    presets, then `probe`, which is assembled separately. The confirmation
+    presets, then `probe`, which is assembled separately, then one agent run
+    per installed harness. The confirmation
     message counts from here; counting `build_presets` alone told users a
     six-preset runner had five."""
-    return [key for key, _, _ in build_presets(found)] + [probe_preset(found)[0]]
+    return ([key for key, _, _ in build_presets(found)] + [probe_preset(found)[0]]
+            + [key for key, _, _ in agent_presets(found)]
+            + [key for key, _, _ in scenario_presets(found)])
 
 
 def _script_name(found: Detected) -> str:
@@ -1390,9 +1530,19 @@ def render_script(found: Detected) -> str:
         out.append(f"  {key:<12} {description}")
     pkey, pdesc, _ = probe_preset(found)
     out.append(f"  {pkey:<12} {pdesc}")
+    agents = agent_presets(found)
+    for key, description, _ in agents:
+        out.append(f"  {key:<12} {description}")
+    scenarios = scenario_presets(found)
+    for key, description, _ in scenarios:
+        out.append(f"  {key:<12} {description}")
     out += [
         "",
-        "env overrides: BENCHY SEED OUTDIR RUNS EXTRA TAG DRY_RUN",
+        "env overrides: BENCHY SEED OUTDIR RUNS EXTRA TAG DRY_RUN AB NOTE",
+        "",
+        "ab-before and ab-after share \\$OUTDIR/ab-\\$AB (AB defaults to 'deploy'): change the",
+        "server between them. NOTE='what this side is' records a change the endpoint cannot",
+        "show; EXTRA='--agent auto' on ab-before adds an agent arm to both sides.",
         "",
         "A fixed SEED makes two runs directly comparable (paired test), but also lets the",
         "second one hit the prefix cache the first populated -- prefill inflates while decode",
@@ -1432,15 +1582,52 @@ def render_script(found: Detected) -> str:
     # of which the probe subcommand accepts.
     out += [f"  {pkey})", *pbody, "    IS_PROBE=1", "    ;;"]
 
+    for key, _, argv in agents:
+        abody = _wrap([_quote(a) for a in argv], "          ")
+        abody[0] = "    args=(" + abody[0].lstrip()
+        abody[-1] = abody[-1] + ")"
+        # IS_AGENT: no --seed, --format or --latency-mode there either, and a
+        # run's result is compared with another agent result, not a benchmark.
+        out += [f"  {key})", *abody, "    IS_AGENT=1", "    ;;"]
+
+    for key, _, argv in scenarios:
+        sbody = _wrap([_quote(a) for a in argv], "          ")
+        sbody[0] = "    args=(" + sbody[0].lstrip()
+        sbody[-1] = sbody[-1] + ")"
+        where = ('"$OUTDIR/ab-${AB:-deploy}"' if key.startswith("ab-")
+                 else '"$OUTDIR/$TAG"')
+        out += [f"  {key})", *sbody, f"    SCENARIO_DIR={where}", "    ;;"]
+
     out += [
         "  *)",
         '    echo "error: unknown preset \'$preset\'" >&2; usage >&2; exit 2 ;;',
         "esac",
         "",
-        'if [[ -n "${IS_PROBE:-}" ]]; then',
+        'if [[ -n "${SCENARIO_DIR:-}" ]]; then',
+        '  args+=(--dir "$SCENARIO_DIR")',
+        '  [[ -n "${NOTE:-}" && "$preset" == ab-* ]] && args+=(--note "$NOTE")',
+        # Only ab-before measures with a --runs of its own; ab-after repeats
+        # exactly what before ran, and qualify's steps are fixed-size checks.
+        '  [[ -n "$RUNS" && "$preset" == ab-before ]] && args+=(--runs "$RUNS")',
+        # SEED too, so an A/B meant to pair with an earlier run can: ab-after
+        # reuses whatever seed before kept, and qualify picks its own.
+        '  [[ "$preset" == ab-before ]] && args+=(--seed "$SEED")',
+        "  # shellcheck disable=SC2206",
+        '  [[ -n "$EXTRA" ]] && args+=($EXTRA)',
+        '  RESULT="$SCENARIO_DIR/VERDICT.txt"',
+        '  [[ "$preset" == ab-before ]] && RESULT="$SCENARIO_DIR/VERDICT-before.txt"',
+        'elif [[ -n "${IS_PROBE:-}" ]]; then',
         # Transcripts too: the fabrication evidence -- which lines a model
         # cited, and whether they exist -- lives there, not in the result.
+        # EXTRA but not RUNS: the probe counts --trials, which EXTRA can set.
+        "  # shellcheck disable=SC2206",
+        '  [[ -n "$EXTRA" ]] && args+=($EXTRA)',
         '  args+=(--seed "$SEED" --save-result "$RESULT" --save-transcripts "${RESULT%.json}-transcripts.json")',
+        'elif [[ -n "${IS_AGENT:-}" ]]; then',
+        '[[ -n "$RUNS" ]] && args+=(--runs "$RUNS")',
+        "# shellcheck disable=SC2206",
+        '[[ -n "$EXTRA" ]] && args+=($EXTRA)',
+        '  args+=(--save-result "$RESULT")',
         "else",
         '[[ -n "$RUNS" ]] && args+=(--runs "$RUNS")',
         "# shellcheck disable=SC2206",
@@ -1448,14 +1635,32 @@ def render_script(found: Detected) -> str:
         'args+=(--seed "$SEED" --format json --save-result "$RESULT")',
         "fi",
         "",
-        'echo "==> preset=$preset seed=$SEED"',
+        'if [[ ( -n "${SCENARIO_DIR:-}" && "$preset" != ab-before ) || -n "${IS_AGENT:-}" ]]; then',
+        '  echo "==> preset=$preset"',
+        "else",
+        '  echo "==> preset=$preset seed=$SEED"',
+        "fi",
         'echo "    result: $RESULT"',
         "printf '   '; printf ' %q' $BENCHY \"${args[@]}\"; echo",
         "",
         '[[ -n "${DRY_RUN:-}" ]] && exit 0',
         "",
+        'if [[ -n "${SCENARIO_DIR:-}" ]]; then',
+        '  exec $BENCHY "${args[@]}"',
+        "fi",
         '$BENCHY "${args[@]}"',
         "",
+        'if [[ -n "${IS_AGENT:-}" ]]; then',
+        "cat <<EOF",
+        "",
+        "Saved: $RESULT",
+        "",
+        "To A/B against another configuration, run it the same way (RUNS=20 on both",
+        "sides for a comparison worth reading), then compare by task:",
+        "    TAG=other $0 $preset",
+        "    $BENCHY compare $RESULT $OUTDIR/other.json",
+        "EOF",
+        "else",
         "cat <<EOF",
         "",
         "Saved: $RESULT",
@@ -1464,6 +1669,7 @@ def render_script(found: Detected) -> str:
         "    SEED=$SEED TAG=other $0 $preset",
         "    $BENCHY compare $RESULT $OUTDIR/other.json",
         "EOF",
+        "fi",
         "",
     ]
     return "\n".join(out)
@@ -1503,6 +1709,8 @@ def main() -> int:
     from .config import API_KEY_ENV, resolve_api_key
     args.api_key = resolve_api_key(args.api_key)
     found = detect(args.base_url, args.api_key, args.model)
+    found.harnesses = installed_harnesses()
+    found.sandbox = shutil.which("bwrap") is not None
     # The suggestions never carry the key; they read it from the environment,
     # as every subcommand does. Saying so is what keeps someone from pasting it
     # back onto the command line when the first suggested run fails with a 401.

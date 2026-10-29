@@ -49,8 +49,9 @@ Two things were **not** held fixed, and both are stated wherever they matter:
   timeouts at the end of its newer-three arm ran about ten times slower than that
   task's median, and are read as the box, not the model.
 
-The main suite is the eleven tasks unchanged since the suite's first version (`sync`
-through `feature` below); the newer three (`handoff`, `handoff-quiet`, `red-test`) were
+The main suite is the eleven tasks of the suite's first version (`sync` through
+`feature` below; three of their graders were tightened later, and regrading every kept
+run with them changed no verdict); the newer three (`handoff`, `handoff-quiet`, `red-test`) were
 added or changed later and are reported separately, so nothing is pooled across a
 change of instrument.
 
@@ -118,7 +119,7 @@ Reading it:
   explicit user approval in this conversation; NEVER silently shrink", or the escalation
   rule's "If overruled, execute user's call". The control's one failure judged the key a
   placeholder. So the prompt carries the argument the model commits by; what makes up the
-  rest of OMP's larger effect (65% against 85% on Pi) -- its own tools, the reminder it adds
+  rest of OMP's larger effect (65% under OMP, against 85% for its prompt on Pi) -- its own tools, the reminder it adds
   to the user turn, or noise around 13/20 -- was not tested.
 - **`handoff-quiet` is hard for this model under every harness** (1-5 of 20): taking over
   an unfinished session whose last import was wrong by a factor of six, with nothing

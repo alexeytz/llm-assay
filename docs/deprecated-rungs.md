@@ -117,8 +117,11 @@ impossibility is the injected one. That is checkable after the fact - regenerate
 the haystack from the seed and scan it - and has been checked on every false
 positive worth believing.
 
-It reaches 10/10 at 2,048 tokens, where `near` and `corpus` sat at 7-8/10 and
-therefore could not support a depth measurement at all.
+It reached 10/10 at 2,048 tokens, where `near` and `corpus` sat at 7-8/10 and
+therefore could not support a depth measurement at all. (That 10/10 was n=10, on a
+scorer later found to read answers off the reasoning trace. Re-measured at n=20, `log`
+is 14/20 at 2,048 and 14/19 at 16,384: flat across the shallow range, not at the
+ceiling.)
 
 `clean` and `outlier` were later moved onto this same generated haystack for the
 same reason. A control drawn from a different distribution than the measurement
